@@ -1,0 +1,7 @@
+{
+  "session_id": "sess_test_prompt",
+  "transcript_path": "/tmp/transcript.jsonl",
+  "cwd": "D:\\云桌面安全\\test",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "请帮我分析 projects 下的 sample.txt"
+}

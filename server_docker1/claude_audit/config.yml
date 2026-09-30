@@ -1,0 +1,38 @@
+# server 端配置
+# 单机自测阶段: local_collector=true 保留本地读盘;后续多设备走 push 时置 false
+local_collector: false
+
+# 仅当 local_collector=true 时生效
+log_sources:
+  - D:\cloud_security\test\logs\input_scanner.jsonl
+  - D:\cloud_security\test\logs\output_scanner.jsonl
+  - D:\cloud_security\test\logs\stop_review.jsonl
+watch_dir: D:\cloud_security\test\logs
+
+database: D:\cloud_security\claude_audit\data\audit.db
+
+rules_dir: D:\cloud_security\claude_audit\claude_audit\detector\rules
+
+web:
+  host: 0.0.0.0
+  port: 8787
+
+# POST /ingest 相关
+ingest:
+  enabled: true
+  # token 留空表示不校验(局域网/单机自用);生产环境请填 32+ 位随机串
+  token: ""
+
+# 插件 zip 文件存储目录（客户端自动更新用）
+plugins_dir: data/plugins
+
+# LiteLLM 网关（插件状态页面用：拉取 key 使用日志/在线判断）
+litellm:
+  host: http://192.168.3.124:4000
+  api_key: "sk-litellm-demo-key"
+  # LiteLLM 最新请求时间比插件上报最新时间晚超过该小时数 => 判定插件已离线
+  offline_threshold_hours: 3
+
+# GLM 监控数据 DB（由 glm_monitor/monitor.py 采集器写入，平台只读）
+# 采集器需单独启动: python glm_monitor/monitor.py (默认 127.0.0.1:8790)
+glm_monitor_db: ../glm_monitor/glm_monitor_data.db

@@ -1,0 +1,659 @@
+{% extends "base.html" %}
+{% block title %}GLM 监控 · Cloud Security AI 日志监控平台{% endblock %}
+{% block topbar %}GLM 后端实时监控{% endblock %}
+
+{% block body %}
+<style>
+.gm-bar{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:18px}
+.gm-pill{background:#f1f5f9;border:1px solid #cbd5e1;border-radius:6px;padding:5px 12px;font-size:13px;color:#334155}
+.gm-pill.err{color:#dc2626;border-color:#fca5a5;background:#fef2f2}
+.gm-pill.ok{color:#16a34a;border-color:#86efac;background:#f0fdf4}
+.gm-card{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin-bottom:20px;box-shadow:0 1px 2px rgba(0,0,0,0.04)}
+.gm-card h2{margin:0 0 10px 0;font-size:15px;color:#1e3a8a;font-weight:600}
+.gm-kpis{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px}
+.gm-kpi{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:9px 15px;min-width:108px}
+.gm-kpi .lab{font-size:11px;color:#64748b;margin-bottom:3px}
+.gm-kpi .val{font-size:21px;font-weight:700;color:#0f172a}
+.gm-kpi .val.wait{color:#d97706} .gm-kpi .val.run{color:#16a34a} .gm-kpi .val.pre{color:#dc2626}
+.gm-kpi .val.kv{color:#2563eb} .gm-kpi .val.hit{color:#16a34a}
+.gm-kpi .src{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:9px;color:#94a3b8;margin:1px 0 3px;word-break:break-all;line-height:1.2}
+.gm-chart{height:260px;position:relative}
+.gm-note{margin-top:8px;color:#64748b;font-size:12px;line-height:1.7}
+.gm-note b{color:#334155}
+.gm-tbbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.gm-tbbar label{font-size:13px;color:#64748b}
+.gm-tbbar select,.gm-tbbar button{border:1px solid #cbd5e1;border-radius:4px;padding:4px 10px;font-size:13px;background:#fff;color:#334155;cursor:pointer}
+.gm-tbbar button:hover{background:#f1f5f9}
+.gm-tbbar .pginfo{font-size:13px;color:#64748b;min-width:70px;text-align:center}
+.gm-table{width:100%;border-collapse:collapse;font-size:13px}
+.gm-table th,.gm-table td{padding:8px 10px;text-align:left;border-bottom:1px solid #e2e8f0}
+.gm-table th{color:#64748b;font-weight:600;font-size:12px;background:#f8fafc}
+.gm-table tr:hover td{background:#f8fafc}
+.gm-many{color:#dc2626;font-weight:700}
+.gm-mid{color:#d97706}
+.gm-name{color:#2563eb}
+.gm-dim{color:#94a3b8}
+.gm-fail{color:#dc2626}
+.gm-foot{color:#94a3b8;font-size:12px;text-align:center;padding:14px}
+.gm-ctrl{display:flex;gap:14px;align-items:center;margin-left:auto}
+.gm-ctrl label{font-size:13px;color:#64748b;display:flex;align-items:center;gap:4px}
+.gm-ctrl select{border:1px solid #cbd5e1;border-radius:4px;padding:3px 8px;font-size:13px;background:#fff;color:#334155;cursor:pointer}
+.gm-ctrl select:hover{border-color:#94a3b8}
+.gm-sel{border:1px solid #cbd5e1;border-radius:4px;padding:3px 8px;font-size:13px;background:#fff;color:#334155;cursor:pointer}
+.gm-sel:hover{border-color:#94a3b8}
+.gm-thbtn{border:1px solid #cbd5e1;border-radius:4px;padding:3px 10px;font-size:12px;background:#fff;color:#334155;cursor:pointer}
+.gm-thbtn:hover{background:#f1f5f9}
+.gm-thbox{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:0 0 10px;padding:8px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;color:#334155}
+.gm-thbox label{display:flex;align-items:center;gap:6px}
+.gm-thbox input{width:110px;border:1px solid #cbd5e1;border-radius:4px;padding:3px 8px;font-size:13px;color:#334155}
+.gm-thbox button{border:1px solid #2563eb;border-radius:4px;padding:4px 14px;font-size:13px;background:#2563eb;color:#fff;cursor:pointer}
+.gm-thbox button:hover{background:#1d4ed8}
+/* ── 逐条明细弹窗 ── */
+.gm-modal-bg{position:fixed;inset:0;background:rgba(15,23,42,0.45);display:flex;align-items:center;justify-content:center;z-index:1000}
+.gm-modal{background:#fff;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,0.2);width:92%;max-width:960px;max-height:86vh;display:flex;flex-direction:column;overflow:hidden}
+.gm-modal-hd{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid #e2e8f0}
+.gm-modal-hd b{font-size:15px;color:#1e3a8a}
+.gm-modal-x{margin-left:auto;cursor:pointer;color:#94a3b8;font-size:18px;line-height:1;padding:4px 8px;border-radius:4px}
+.gm-modal-x:hover{color:#dc2626;background:#fef2f2}
+.gm-modal-body{padding:12px 18px 16px;overflow-y:auto}
+.gm-modal-tb{width:100%;border-collapse:collapse;font-size:12.5px}
+.gm-modal-tb th,.gm-modal-tb td{padding:6px 8px;text-align:left;border-bottom:1px solid #f1f5f9;white-space:nowrap}
+.gm-modal-tb th{color:#64748b;font-weight:600;font-size:11px;background:#f8fafc;position:sticky;top:0}
+.gm-modal-tb td.tok{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-align:right}
+.gm-modal-tb tr:hover td{background:#f8fafc}
+.gm-pgbar{display:flex;gap:10px;align-items:center;justify-content:center;padding:12px 0 2px}
+.gm-pgbar button{border:1px solid #cbd5e1;border-radius:4px;padding:5px 12px;font-size:13px;background:#fff;color:#334155;cursor:pointer}
+.gm-pgbar button:hover:not(:disabled){background:#f1f5f9}
+.gm-pgbar button:disabled{opacity:0.4;cursor:default}
+.gm-pgbar .pginfo{font-size:13px;color:#64748b;min-width:80px;text-align:center}
+.gm-click{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
+.gm-click:hover{color:#1d4ed8}
+</style>
+
+<div class="gm-bar">
+  <span class="gm-pill" id="gm-status">…</span>
+  <span class="gm-pill">LiteLLM 窗口 5min · 采样 15s</span>
+  <div class="gm-ctrl">
+    <label>采样间隔
+      <select id="gm-sel-interval">
+        <option value="5" selected>5s</option>
+        <option value="10">10s</option>
+        <option value="30">30s</option>
+        <option value="60">1min</option>
+      </select>
+    </label>
+    <label>图表范围
+      <select id="gm-sel-range">
+        <option value="15m" selected>15分钟</option>
+        <option value="1h">1小时</option>
+        <option value="6h">6小时</option>
+        <option value="1d">1天</option>
+        <option value="2d">2天</option>
+        <option value="3d">3天</option>
+        <option value="7d">7天</option>
+      </select>
+    </label>
+  </div>
+</div>
+
+<div class="gm-card" id="gm-inflight-card">
+  <h2 style="display:flex;align-items:center;flex-wrap:wrap">🔴 实时在途请求 — 谁正在跑 / 输入 token 大小
+    <span id="gm-if-cnt" style="margin-left:10px;font-size:13px;font-weight:normal;color:#64748b">在途 0 个</span>
+    <span id="gm-if-big" style="display:none;margin-left:8px;font-size:12px;color:#dc2626">⚠ 超大 <b id="gm-if-bign">0</b> 个</span>
+    <span id="gm-if-slow" style="display:none;margin-left:8px;font-size:12px;color:#dc2626">⚠ 超时 <b id="gm-if-slown">0</b> 个</span>
+    <span id="gm-if-dead" style="display:none;margin-left:8px;font-size:12px;color:#d97706">⚠ 采集器不可达或回调未部署</span>
+    <span style="margin-left:auto;display:flex;gap:8px;align-items:center;font-size:12px;font-weight:normal;color:#64748b;white-space:nowrap">
+      超大上下文阈值 <b id="gm-if-bigth" style="color:#dc2626">20万</b> · 超时阈值 <b id="gm-if-slowth" style="color:#dc2626">120s</b>
+      <button id="gm-thr-btn" class="gm-thbtn" title="自定义阈值">⚙ 阈值</button>
+    </span>
+  </h2>
+  <div id="gm-thr-box" class="gm-thbox" style="display:none">
+    <label>大上下文阈值(token) <input id="gm-thr-big" type="number" step="1000" min="1000"></label>
+    <label>超时阈值(秒) <input id="gm-thr-slow" type="number" step="1" min="1"></label>
+    <button id="gm-thr-save">保存</button>
+    <span id="gm-thr-msg" class="gm-dim" style="font-size:12px"></span>
+  </div>
+  <div class="gm-note" style="margin-bottom:8px">
+    请求<b>到达 LiteLLM 即显示</b>（不用等跑完）· 输入 token 为到达时估算值（标「估」），结束后显示真实值（标「实」）· finished 行灰显保留 30s 供回看
+  </div>
+  <table class="gm-table">
+    <thead><tr><th>使用人</th><th>模型</th><th>输入 token</th><th>输出 token</th><th>状态</th><th>已耗时</th><th>开始于</th></tr></thead>
+    <tbody id="gm-if-tbody"><tr><td colspan="7" class="gm-dim" style="text-align:center;padding:14px">等待 LiteLLM 回调推送…</td></tr></tbody>
+  </table>
+  <div class="gm-tbbar" style="margin-top:10px">
+    <label>每页
+      <select id="gm-if-ps">
+        <option>10</option><option selected>20</option><option>50</option>
+      </select> 条
+    </label>
+    <span class="gm-dim" style="font-size:13px">共 <span id="gm-if-total">0</span> 条</span>
+    <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
+      <button id="gm-if-prev">上一页</button>
+      <span class="gm-pginfo" id="gm-if-pginfo">1 / 1</span>
+      <button id="gm-if-next">下一页</button>
+      <span style="display:inline-flex;align-items:center;gap:3px;margin-left:6px;font-size:12px;color:#64748b">
+        前往
+        <input id="gm-if-jump" type="number" min="1" value="1" style="width:44px;height:24px;text-align:center;border:1px solid #cbd5e1;border-radius:4px;font-size:12px;padding:0 2px" onkeydown="if(event.key==='Enter'){event.preventDefault();doGmIfJump();}">
+        页
+        <button type="button" onclick="doGmIfJump()" style="padding:1px 6px;height:24px;font-size:12px;cursor:pointer">跳转</button>
+      </span>
+    </span>
+  </div>
+</div>
+
+<div class="gm-card">
+  <h2>排队中的请求（还没轮到 GPU 处理；大于 0 说明 GPU 忙不过来，新请求要等）</h2>
+  <div class="gm-kpis" id="gm-kpis"></div>
+  <div class="gm-chart"><canvas id="gm-cw"></canvas></div>
+</div>
+
+<div class="gm-card">
+  <h2>GPU 正在同时处理的请求数（请求 ≠ 对话：一个对话可能同时发出多个请求）</h2>
+  <div class="gm-chart"><canvas id="gm-cr"></canvas></div>
+</div>
+
+<div class="gm-card">
+  <h2>后端健康 — 显存 KV cache 占用率（左轴%）+ 前缀缓存命中率（右轴%）+ 累计吞吐</h2>
+  <div class="gm-kpis" id="gm-hkpis"></div>
+  <div class="gm-chart"><canvas id="gm-ck"></canvas></div>
+  <div class="gm-note">
+    <b style="color:#2563eb">■ KV cache 占用率</b> = 已用显存 KV block / 总量，接近 100% 时 vLLM 会排队+抢占请求（慢的根因之一）<br>
+    <b style="color:#16a34a">■ 前缀缓存命中率</b> = 命中缓存的 prompt token / 总 prompt token，越高越省算力<br>
+    <b>累计 Token</b> = 自 vLLM 进程启动以来的总量（输入 = 收到的提示词总字数，输出 = 生成的回答总字数），按 vLLM 计数器累加；vLLM 重启后归零。注意：这里是进程级累计，不是上面表格里"近 5 分钟"的窗口值。
+  </div>
+</div>
+
+<div class="gm-card">
+  <h2>各 IP 对话/请求聚合（近 <span id="gm-win">10</span> 分钟，仅 GLM-5.2-Int8，LiteLLM）
+    <span style="margin-left:14px;font-size:13px;font-weight:normal;color:#64748b">日志范围
+      <select id="gm-ips-range" class="gm-sel">
+        <option value="" selected>实时（5min 快照）</option>
+        <option value="15m">15 分钟</option>
+        <option value="1h">1 小时</option>
+        <option value="6h">6 小时</option>
+        <option value="1d">1 天</option>
+      </select>
+    </span>
+    <span id="gm-ips-trunc" style="display:none;margin-left:8px;color:#d97706;font-size:12px">⚠ 该范围超过 2500 条上限，仅聚合最近 2500 条</span>
+  </h2>
+  <div class="gm-note" style="margin-bottom:10px">
+    概念区分: <b>对话数</b> = 该 IP 开了几个 Claude Code 窗口 ·
+    <b>请求数</b> = 发出的 API 调用条数（一个任务会发出多条）·
+    上面图的"处理中" = 某一刻 GPU 同时在算的请求数，和对话数没有固定换算关系
+  </div>
+  <div id="gm-gap" class="gm-note" style="margin-bottom:10px;padding:8px 12px;border-radius:6px;background:#f1f5f9;border:1px solid #e2e8f0;display:none">
+    <b>实时对比：</b>vLLM 当前 排队 <span id="gm-gap-w" style="color:#d97706;font-weight:600">0</span> / 处理中 <span id="gm-gap-r" style="color:#16a34a;font-weight:600">0</span>，
+    本表（已完成）覆盖 <span id="gm-gap-done" style="color:#2563eb;font-weight:600">0</span> 条请求
+    <span id="gm-gap-warn" style="display:none;margin-left:8px;color:#dc2626">⚠ 有 <b id="gm-gap-stuck">0</b> 个请求正在排队/处理中尚未完成，不计入下表（卡住时看不到是谁，只能看到数量）</span>
+  </div>
+  <div class="gm-tbbar">
+    <label>每页
+      <select id="gm-ps">
+        <option>10</option><option selected>20</option><option>50</option><option>100</option>
+      </select> 条
+    </label>
+    <span class="gm-dim" style="font-size:13px">共 <span id="gm-total">0</span> 条</span>
+    <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
+      <button id="gm-prev">上一页</button>
+      <span class="gm-pginfo" id="gm-pginfo">1 / 1</span>
+      <button id="gm-next">下一页</button>
+      <span style="display:inline-flex;align-items:center;gap:3px;margin-left:6px;font-size:12px;color:#64748b">
+        前往
+        <input id="gm-ip-jump" type="number" min="1" value="1" style="width:44px;height:24px;text-align:center;border:1px solid #cbd5e1;border-radius:4px;font-size:12px;padding:0 2px" onkeydown="if(event.key==='Enter'){event.preventDefault();doGmIpJump();}">
+        页
+        <button type="button" onclick="doGmIpJump()" style="padding:1px 6px;height:24px;font-size:12px;cursor:pointer">跳转</button>
+      </span>
+    </span>
+  </div>
+  <table class="gm-table">
+    <thead><tr><th>使用人</th><th>客户端 IP</th><th>请求数 (API 调用条数)</th><th>对话数 (session)</th><th>平均耗时</th><th>最大耗时</th><th>失败</th><th>首次请求时间</th><th>末次请求时间</th><th>模型</th></tr></thead>
+    <tbody id="gm-tbody"><tr><td colspan="10" class="gm-dim">加载中…</td></tr></tbody>
+  </table>
+  <div class="gm-note" style="margin-top:10px">更新于: <span id="gm-llts">—</span> · GLM 调用 IP <span id="gm-ipcnt">0</span> 个 · 窗口内 GLM 请求 <span id="gm-treq">0</span> 条 / 对话 <span id="gm-tsess">0</span> 个</div>
+</div>
+
+<div class="gm-foot">数据源: vLLM 128/129 /metrics + LiteLLM /spend/logs/v2 + LiteLLM pre-call 回调(在途) · 在途卡片需部署 custom_callbacks/inflight_logger.py</div>
+
+<!-- 逐条请求明细弹窗 (点击 IP 表人名/IP 触发) -->
+<div class="gm-modal-bg" id="gm-detail-bg" style="display:none">
+  <div class="gm-modal">
+    <div class="gm-modal-hd">
+      <b id="gm-d-title">请求明细</b>
+      <span class="gm-dim" id="gm-d-sub" style="font-size:12px"></span>
+      <span class="gm-modal-x" onclick="closeDetail()">✕</span>
+    </div>
+    <div class="gm-modal-body">
+      <div class="gm-note" id="gm-d-ctx" style="margin-bottom:10px"></div>
+      <table class="gm-modal-tb">
+        <thead><tr><th>开始时间</th><th>结束时间</th><th>耗时</th><th>输入token</th><th>KV占用</th><th>输出token</th><th>缓存命中</th><th>状态</th><th>模型</th></tr></thead>
+        <tbody id="gm-d-tbody"><tr><td colspan="9" class="gm-dim" style="text-align:center;padding:14px">加载中…</td></tr></tbody>
+      </table>
+      <div class="gm-pgbar">
+        <button id="gm-d-prev" onclick="loadDetail(DETAIL_PAGE-1)">‹ 上一页</button>
+        <span class="pginfo" id="gm-d-pginfo">1 / 1</span>
+        <button id="gm-d-next" onclick="loadDetail(DETAIL_PAGE+1)">下一页 ›</button>
+        <span style="display:inline-flex;align-items:center;gap:3px;margin-left:6px;font-size:12px;color:#64748b">
+          前往
+          <input id="gm-d-jump" type="number" min="1" value="1" style="width:44px;height:24px;text-align:center;border:1px solid #cbd5e1;border-radius:4px;font-size:12px;padding:0 2px" onkeydown="if(event.key==='Enter'){event.preventDefault();doGmDetailJump();}">
+          页
+          <button type="button" onclick="doGmDetailJump()" style="padding:1px 6px;height:24px;font-size:12px;cursor:pointer">跳转</button>
+        </span>
+        <span class="gm-dim" id="gm-d-total" style="font-size:12px;margin-left:8px"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/chart.umd.min.js"></script>
+<script>
+let cw, cr, ck;
+function mk(ctx){
+  return new Chart(ctx,{type:'line',data:{labels:[],datasets:[]},
+    options:{animation:false,responsive:true,maintainAspectRatio:false,
+      interaction:{intersect:false,mode:'index'},
+      scales:{x:{ticks:{maxTicksLimit:10,color:'#94a3b8'},grid:{color:'#e2e8f0'}},
+        y:{beginAtZero:true,ticks:{color:'#94a3b8'},grid:{color:'#e2e8f0'}}},
+      plugins:{legend:{labels:{color:'#334155',font:{size:12}}}}}});
+}
+function init(){
+  if(typeof Chart==='undefined'){document.getElementById('gm-status').innerHTML='<span class="gm-pill err">Chart.js 加载失败</span>';return;}
+  cw=mk(document.getElementById('gm-cw').getContext('2d'));
+  cr=mk(document.getElementById('gm-cr').getContext('2d'));
+  ck=new Chart(document.getElementById('gm-ck').getContext('2d'),{type:'line',data:{labels:[],datasets:[]},
+    options:{animation:false,responsive:true,maintainAspectRatio:false,
+      interaction:{intersect:false,mode:'index'},
+      scales:{x:{ticks:{maxTicksLimit:10,color:'#94a3b8'},grid:{color:'#e2e8f0'}},
+        y:{beginAtZero:true,max:100,ticks:{color:'#2563eb',callback:v=>v+'%'},grid:{color:'#e2e8f0'},position:'left',title:{display:true,text:'KV cache 占用 %',color:'#2563eb'}},
+        y1:{beginAtZero:true,max:100,ticks:{color:'#16a34a',callback:v=>v+'%'},grid:{drawOnChartArea:false},position:'right',title:{display:true,text:'缓存命中率 %',color:'#16a34a'}}},
+      plugins:{legend:{labels:{color:'#334155',font:{size:12}}}}}});
+}
+// 数据点: 点数不多(<=120)时显示圆点便于看清每个采样值(对标参考图); 点数多时隐藏避免糊成一团。
+// 点加白色描边(borderWidth)让它在折线上跳出来, 实心+描边双重视觉。
+function ds(label,color,data){const pt=data.length<=120?4:0;return{label,data,borderColor:color,backgroundColor:color+'22',borderWidth:2,pointRadius:pt,pointHoverRadius:6,pointBackgroundColor:color,pointBorderColor:'#fff',pointBorderWidth:1.5,tension:0.3,fill:true,spanGaps:true};}
+function dsY1(label,color,data){const pt=data.length<=120?4:0;return{label,data,borderColor:color,backgroundColor:'transparent',borderWidth:2,pointRadius:pt,pointHoverRadius:6,pointBackgroundColor:color,pointBorderColor:'#fff',pointBorderWidth:1.5,tension:0.3,fill:false,yAxisID:'y1',spanGaps:true};}
+function fmtTok(n){n=n||0; if(n>=1e8)return (n/1e8).toFixed(2)+'亿'; if(n>=1e4)return (n/1e4).toFixed(1)+'万'; return n;}
+
+async function loadQueue(){
+  try{
+    const range=document.getElementById('gm-sel-range').value;
+    const d=await (await fetch('/api/glm/queue?range='+encodeURIComponent(range))).json();
+    const st=document.getElementById('gm-status');
+    if(!d.ok){st.innerHTML='<span class="gm-pill err">'+d.error+'</span>';return;}
+    const online=d.collector_online;
+    const live=(d.range_sec||900)<=1800;
+    st.innerHTML='<span class="gm-pill '+(online?'ok':'err')+'">'+(online?'● 采集运行中':'⚠ 采集器离线('+d.age_s+'s)')+'</span> · '+
+      Object.entries(d.latest).map(([be,x])=>be+': 排队'+x.waiting+' / 处理中'+x.running).join(' · ')+
+      ' · 最近 '+d.ts_str+(live?' · 实时':' · 趋势');
+    if(!cw) return;
+    cw.data.labels=d.labels; cr.data.labels=d.labels; ck.data.labels=d.labels;
+    cw.data.datasets=[]; cr.data.datasets=[]; ck.data.datasets=[];
+    // 128/129 已合并为单一 GLM 池, 只用一套配色
+    const BCOLORS={'GLM':{w:'#d97706',r:'#f59e0b',kv:'#f59e0b',hit:'#fbbf24'}};
+    function bcol(be,key){const c=BCOLORS[be];return c?c[key]:'#94a3b8';}
+    for(const be in d.series){
+      cw.data.datasets.push(ds(be+' 排队',bcol(be,'w'),d.series[be].waiting));
+      cr.data.datasets.push(ds(be+' 处理中',bcol(be,'r'),d.series[be].running));
+      ck.data.datasets.push(ds(be+' KV cache %',bcol(be,'kv'),d.series[be].kv));
+      ck.data.datasets.push(dsY1(be+' 缓存命中 %',bcol(be,'hit'),d.series[be].hit));
+    }
+    cw.update('none'); cr.update('none'); ck.update('none');
+    let html='';
+    for(const be in d.latest){const x=d.latest[be];
+      html+='<div class="gm-kpi"><div class="lab">'+be+' 排队中</div><div class="src">vllm:num_requests_waiting</div><div class="val wait">'+x.waiting+'</div></div>';
+      html+='<div class="gm-kpi"><div class="lab">'+be+' 处理中</div><div class="src">vllm:num_requests_running</div><div class="val run">'+x.running+'</div></div>';
+      html+='<div class="gm-kpi"><div class="lab">'+be+' 累计抢占</div><div class="src">vllm:num_preemptions_total</div><div class="val pre">'+(x.preemption||0)+'</div></div>';
+    }
+    document.getElementById('gm-kpis').innerHTML=html;
+    let hh='';
+    for(const be in d.latest){const x=d.latest[be];
+      hh+='<div class="gm-kpi"><div class="lab">'+be+' KV cache</div><div class="src">vllm:kv_cache_usage_perc</div><div class="val kv">'+(x.kv||0).toFixed(1)+'%</div></div>';
+      hh+='<div class="gm-kpi"><div class="lab">'+be+' 缓存命中</div><div class="src">cached_total ÷ prompt_tokens_total</div><div class="val hit">'+(x.prefix_hit_rate||0).toFixed(1)+'%</div></div>';
+      hh+='<div class="gm-kpi"><div class="lab">'+be+' 累计输入 Token</div><div class="src">vllm:prompt_tokens_total</div><div class="val" style="font-size:15px">'+fmtTok(x.prompt_tokens)+'</div></div>';
+      hh+='<div class="gm-kpi"><div class="lab">'+be+' 累计输出 Token</div><div class="src">vllm:generation_tokens_total</div><div class="val" style="font-size:15px">'+fmtTok(x.gen_tokens)+'</div></div>';
+    }
+    document.getElementById('gm-hkpis').innerHTML=hh;
+    LAST_VLLM=d.latest||{};
+    updateGapBar();
+  }catch(e){document.getElementById('gm-status').innerHTML='<span class="gm-pill err">queue err '+e+'</span>';}
+}
+function cls(n){return n>=3?'gm-many':n>=2?'gm-mid':'';}
+// ── 实时对比条: vLLM 排队/处理中 vs LiteLLM 已完成 ──
+let LAST_VLLM={}, LAST_DONE=0;
+function updateGapBar(){
+  const box=document.getElementById('gm-gap');
+  if(!box) return;
+  let w=0,r=0;
+  for(const be in LAST_VLLM){const x=LAST_VLLM[be];w+=(x.waiting||0);r+=(x.running||0);}
+  const stuck=w+r;
+  document.getElementById('gm-gap-w').textContent=Math.round(w);
+  document.getElementById('gm-gap-r').textContent=Math.round(r);
+  document.getElementById('gm-gap-done').textContent=LAST_DONE;
+  const warn=document.getElementById('gm-gap-warn');
+  box.style.display='block';
+  if(stuck>0){
+    warn.style.display='inline';
+    document.getElementById('gm-gap-stuck').textContent=Math.round(stuck);
+  }else{
+    warn.style.display='none';
+  }
+}
+let IP_DATA=[],IP_PAGE=1,IP_PS=20;
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function renderIps(){
+  const total=IP_DATA.length,pages=Math.max(1,Math.ceil(total/IP_PS));
+  if(IP_PAGE>pages)IP_PAGE=pages; if(IP_PAGE<1)IP_PAGE=1;
+  const slice=IP_DATA.slice((IP_PAGE-1)*IP_PS,IP_PAGE*IP_PS);
+  const tb=document.getElementById('gm-tbody');
+  if(!slice.length){tb.innerHTML='<tr><td colspan="10" class="gm-dim">无数据</td></tr>';}
+  else{
+    tb.innerHTML=slice.map(r=>{
+      const n=r.names||'';
+      const nh=n?'<span class="gm-name gm-click" onclick="openDetail(\''+esc(r.ip)+'\',\''+esc(n)+'\')">'+esc(n)+'</span>':'<span class="gm-dim">—</span>';
+      const fh=r.fail?'<span class="gm-fail">'+r.fail+'</span>':'-';
+      const ah=r.avg_ms?(r.avg_ms/1000).toFixed(1)+'s':'-';
+      const mh=r.max_ms?(r.max_ms/1000).toFixed(1)+'s':'-';
+      const fst=r.first_start?esc(r.first_start):'<span class="gm-dim">—</span>';
+      const lst=r.last_start?esc(r.last_start):'<span class="gm-dim">—</span>';
+      return '<tr><td>'+nh+'</td><td><span class="gm-dim gm-click" onclick="openDetail(\''+esc(r.ip)+'\',\''+esc(n)+'\')">'+esc(r.ip)+'</span></td><td>'+r.requests+'</td>'+
+        '<td class="'+cls(r.sessions)+'">'+r.sessions+'</td><td>'+ah+'</td><td>'+mh+'</td>'+
+        '<td>'+fh+'</td><td class="gm-dim" style="font-size:12px;white-space:nowrap">'+fst+'</td>'+
+        '<td class="gm-dim" style="font-size:12px;white-space:nowrap">'+lst+'</td>'+
+        '<td class="gm-dim" style="font-size:12px">'+esc(r.models)+'</td></tr>';
+    }).join('');
+  }
+  document.getElementById('gm-total').textContent=total;
+  document.getElementById('gm-pginfo').textContent=IP_PAGE+' / '+pages;
+}
+async function loadIps(){
+  const r=document.getElementById('gm-ips-range').value;
+  const url=r?('/api/glm/ips?range='+encodeURIComponent(r)):'/api/glm/ips';
+  // 选大范围时立即显示"加载中", 避免用户以为卡死(1天要拉数千条日志)
+  if(r) document.getElementById('gm-tbody').innerHTML='<tr><td colspan="10" class="gm-dim">加载中（正在从 LiteLLM 拉取 '+r+' 日志…）</td></tr>';
+  try{
+    const resp=await fetch(url);
+    const d=await resp.json();
+    // 实时快照模式返回 {ok:true,...}; 自选范围转发采集器返回 {ips:[...],...} 无 ok 字段。
+    // 仅当明确 ok:false 或有 error 字段时才算失败。
+    if(d.ok===false || d.error){
+      document.getElementById('gm-tbody').innerHTML='<tr><td colspan="10" class="gm-dim">'+(d.error||'加载失败')+'</td></tr>';
+      return;
+    }
+    document.getElementById('gm-win').textContent=d.window_min||5;
+    document.getElementById('gm-llts').textContent=d.ts_str||'—';
+    document.getElementById('gm-ipcnt').textContent=d.ips.length;
+    const s=d.summary||{};
+    document.getElementById('gm-treq').textContent=s.total_req||0;
+    document.getElementById('gm-tsess').textContent=s.total_sessions||0;
+    LAST_DONE=s.total_req||0;
+    IP_DATA=d.ips; renderIps();
+    document.getElementById('gm-ips-trunc').style.display=d.truncated?'inline':'none';
+    // gap bar 仅在实时快照模式有意义; 自选范围(1h/6h/1d)的已完成总数与实时排队数不可比, 隐藏
+    const ipsRange=document.getElementById('gm-ips-range').value;
+    document.getElementById('gm-gap').style.display = ipsRange ? 'none' : 'block';
+    if(!ipsRange) updateGapBar();
+  }catch(e){document.getElementById('gm-llts').textContent='err '+e;}
+}
+// ── 实时在途请求 (LiteLLM pre-call 回调, 经采集器转发) ──
+function ifTok(n){n=n||0; if(n>=1e8)return (n/1e8).toFixed(2)+'亿'; if(n>=1e4)return (n/1e4).toFixed(1)+'万'; return n;}
+let IF_DATA=[], IF_PAGE=1, IF_PS=20, IF_META={};
+// 输入 token 单元格: running/stale 显示估, finished 显示实 + 与估的差值
+function ifInTokHtml(r,d){
+  const isRun=r.status==='running', isStale=r.status==='stale';
+  const isBig=r.prompt_tokens>=(d.big_threshold||200000);
+  let tok, lab, diff='';
+  if(isRun||isStale){
+    tok=r.prompt_tokens; lab='估';
+  }else{
+    const est=r.prompt_tokens_est||0, act=r.prompt_tokens_actual||0;
+    tok=act||r.prompt_tokens; lab='实';
+    // 请求结束: 显示 实际值 与 估算值 的差值 (仅当两者都有且不同)
+    if(act>0 && est>0 && act!==est){
+      const delta=act-est;
+      const sign=delta>0?'+':'−';
+      const dHtml='<span class="gm-dim" style="font-size:11px"> (估'+ifTok(est)+' '+sign+ifTok(Math.abs(delta))+')</span>';
+      diff=dHtml;
+    }
+  }
+  return isBig
+    ?'<span style="color:#dc2626;font-weight:700">'+ifTok(tok)+' '+lab+' ⚠超大</span>'+diff
+    :'<span style="color:#d97706">'+ifTok(tok)+' '+lab+'</span>'+diff;
+}
+function renderInflight(){
+  const total=IF_DATA.length, pages=Math.max(1,Math.ceil(total/IF_PS));
+  if(IF_PAGE>pages)IF_PAGE=pages; if(IF_PAGE<1)IF_PAGE=1;
+  const slice=IF_DATA.slice((IF_PAGE-1)*IF_PS,IF_PAGE*IF_PS);
+  const tb=document.getElementById('gm-if-tbody');
+  const d=IF_META||{};
+  if(!slice.length){tb.innerHTML='<tr><td colspan="7" style="color:#16a34a;text-align:center;padding:14px">当前无在途请求 — 没人正在跑</td></tr>';}
+  else{
+    tb.innerHTML=slice.map(r=>{
+      const n=r.name||'';
+      const nh=n?'<span class="gm-name" style="font-weight:600">'+esc(n)+'</span>':'<span class="gm-dim">—</span>';
+      const isRun=r.status==='running';
+      const isFin=!isRun;
+      const th=ifInTokHtml(r,d);
+      const outTok=r.completion_tokens||0;
+      const oh=outTok?'<span style="color:#2563eb">'+ifTok(outTok)+'</span>':'<span class="gm-dim">—</span>';
+      const sh = r.status==='running'
+        ?'<span style="color:#16a34a">● 跑</span>'
+        : r.status==='failed'
+          ?'<span style="color:#dc2626">✗ 败</span>'
+          : r.status==='stale'
+            ?'<span style="color:#d97706">⚠ 僵</span>'
+            :'<span class="gm-dim">✓ 完</span>';
+      const el=r.elapsed||0;
+      const slowTh=d.slow_threshold||120;
+      const eh=el>=slowTh?'<span style="color:#dc2626">'+el+'s ⚠超</span>':'<span>'+el+'s</span>';
+      const op=isFin?' style="opacity:0.5"':'';
+      return '<tr><td'+op+'>'+nh+'</td>'+
+        '<td'+op+' class="gm-dim" style="font-size:12px">'+esc(r.model||'-')+'</td>'+
+        '<td'+op+'>'+th+'</td><td'+op+'>'+oh+'</td><td'+op+'>'+sh+'</td>'+
+        '<td'+op+'>'+eh+'</td><td'+op+' class="gm-dim" style="font-size:12px">'+esc(r.start_str||'')+'</td></tr>';
+    }).join('');
+  }
+  document.getElementById('gm-if-total').textContent=total;
+  document.getElementById('gm-if-pginfo').textContent=IF_PAGE+' / '+pages;
+}
+async function loadInflight(){
+  try{
+    const d=await (await fetch('/api/glm/inflight')).json();
+    const tb=document.getElementById('gm-if-tbody');
+    // 采集器不可达 (502 或 ok:false)
+    if(d.ok===false || d.error){
+      document.getElementById('gm-if-dead').style.display='inline';
+      tb.innerHTML='<tr><td colspan="7" class="gm-dim" style="text-align:center;padding:14px">'+(d.error||'采集器不可达')+'</td></tr>';
+      return;
+    }
+    document.getElementById('gm-if-dead').style.display='none';
+    document.getElementById('gm-if-cnt').textContent='在途 '+(d.running||0)+' 跑 / '+(d.count||0)+' 总';
+    const big=document.getElementById('gm-if-big');
+    if(d.big>0){big.style.display='inline'; document.getElementById('gm-if-bign').textContent=d.big;}
+    else{big.style.display='none';}
+    const slowEl=document.getElementById('gm-if-slow');
+    if(d.slow>0){slowEl.style.display='inline'; document.getElementById('gm-if-slown').textContent=d.slow;}
+    else{slowEl.style.display='none';}
+    document.getElementById('gm-if-bigth').textContent=ifTok(d.big_threshold||200000);
+    document.getElementById('gm-if-slowth').textContent=(d.slow_threshold||120)+'s';
+    IF_META=d; IF_DATA=d.requests||[]; renderInflight();
+  }catch(e){
+    document.getElementById('gm-if-dead').style.display='inline';
+  }
+}
+init(); loadQueue(); loadIps(); loadInflight();
+setInterval(loadInflight,5000);
+let GM_Q_TIMER=null, GM_IPS_TIMER=null, GM_CUR_INTERVAL=5;
+function scheduleQueue(){
+  if(GM_Q_TIMER) clearInterval(GM_Q_TIMER);
+  const range=document.getElementById('gm-sel-range').value;
+  // 小范围按采样间隔刷; 大范围(趋势)30s 刷一次足够
+  const ms=(range==='15m'||range==='1h')?Math.max(3000,GM_CUR_INTERVAL*1000):30000;
+  GM_Q_TIMER=setInterval(loadQueue,ms);
+}
+function scheduleIps(){
+  if(GM_IPS_TIMER) clearInterval(GM_IPS_TIMER);
+  const r=document.getElementById('gm-ips-range').value;
+  // 实时快照 15s 刷; 自选大范围(临时拉 LiteLLM 多页)降低到 60s 减开销
+  GM_IPS_TIMER=setInterval(loadIps, r?60000:15000);
+}
+scheduleQueue();
+scheduleIps();
+// 采样间隔下拉 -> POST 转发到采集器
+document.getElementById('gm-sel-interval').addEventListener('change',async e=>{
+  const sec=parseInt(e.target.value);
+  try{
+    const r=await fetch('/api/glm/interval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({interval:sec})});
+    const d=await r.json();
+    if(d.ok){GM_CUR_INTERVAL=d.interval;scheduleQueue();loadQueue();}
+    else{alert('设置失败: '+(d.error||'未知'));e.target.value=GM_CUR_INTERVAL;}
+  }catch(err){alert('请求失败: '+err);e.target.value=GM_CUR_INTERVAL;}
+});
+// 图表范围下拉 -> 立即重载 + 调刷新频率
+document.getElementById('gm-sel-range').addEventListener('change',()=>{loadQueue();scheduleQueue();});
+// IP 表日志范围下拉 -> 立即重载 + 调刷新频率
+document.getElementById('gm-ips-range').addEventListener('change',()=>{IP_PAGE=1;loadIps();scheduleIps();});
+document.getElementById('gm-ps').addEventListener('change',e=>{IP_PS=parseInt(e.target.value);IP_PAGE=1;renderIps();});
+document.getElementById('gm-prev').addEventListener('click',()=>{IP_PAGE--;renderIps();});
+document.getElementById('gm-next').addEventListener('click',()=>{IP_PAGE++;renderIps();});
+// 在途请求分页
+document.getElementById('gm-if-ps').addEventListener('change',e=>{IF_PS=parseInt(e.target.value);IF_PAGE=1;renderInflight();});
+document.getElementById('gm-if-prev').addEventListener('click',()=>{IF_PAGE--;renderInflight();});
+document.getElementById('gm-if-next').addEventListener('click',()=>{IF_PAGE++;renderInflight();});
+
+function doGmIpJump() {
+  const total=IP_DATA.length, pages=Math.max(1,Math.ceil(total/IP_PS));
+  const inp=document.getElementById('gm-ip-jump');
+  if(!inp) return;
+  let p=parseInt(inp.value,10);
+  if(isNaN(p)||p<1) p=1;
+  if(p>pages) p=pages;
+  IP_PAGE=p;
+  renderIps();
+}
+function doGmIfJump() {
+  const total=IF_DATA.length, pages=Math.max(1,Math.ceil(total/IF_PS));
+  const inp=document.getElementById('gm-if-jump');
+  if(!inp) return;
+  let p=parseInt(inp.value,10);
+  if(isNaN(p)||p<1) p=1;
+  if(p>pages) p=pages;
+  IF_PAGE=p;
+  renderInflight();
+}
+function doGmDetailJump() {
+  const inp=document.getElementById('gm-d-jump');
+  if(!inp) return;
+  let p=parseInt(inp.value,10);
+  if(isNaN(p)||p<1) p=1;
+  if(DETAIL_PAGES && p>DETAIL_PAGES) p=DETAIL_PAGES;
+  loadDetail(p);
+}
+
+// ── 阈值自定义 (超大上下文 token / 超时秒数) ──
+const _thBox=document.getElementById('gm-thr-box');
+document.getElementById('gm-thr-btn').addEventListener('click',()=>{
+  const show=_thBox.style.display==='none';
+  _thBox.style.display=show?'flex':'none';
+  if(show){ // 打开时用最近一次 inflight 返回的阈值预填
+    const d=IF_META||{};
+    document.getElementById('gm-thr-big').value=d.big_threshold||200000;
+    document.getElementById('gm-thr-slow').value=d.slow_threshold||120;
+    document.getElementById('gm-thr-msg').textContent='';
+  }
+});
+document.getElementById('gm-thr-save').addEventListener('click',async()=>{
+  const big=parseInt(document.getElementById('gm-thr-big').value,10);
+  const slow=parseInt(document.getElementById('gm-thr-slow').value,10);
+  const msg=document.getElementById('gm-thr-msg');
+  if(!(big>=1000) || !(slow>=1)){msg.textContent='数值非法';return;}
+  msg.textContent='保存中…';
+  try{
+    const r=await fetch('/api/glm/thresholds',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({big_context:big,slow_sec:slow})});
+    const d=await r.json();
+    if(d.ok){msg.textContent='已保存 ✓'; loadInflight();}
+    else{msg.textContent='失败: '+(d.error||'未知');}
+  }catch(e){msg.textContent='请求失败: '+e;}
+});
+
+// ── 逐条请求明细弹窗 (点击 IP 表人名/IP 触发) ──
+let DETAIL_IP='', DETAIL_NAMES='', DETAIL_PAGE=1, DETAIL_PAGES=1, DETAIL_TOTAL=0;
+function openDetail(ip,names){
+  DETAIL_IP=ip; DETAIL_NAMES=names||'';
+  document.getElementById('gm-d-title').textContent='请求明细 — '+(DETAIL_NAMES||DETAIL_IP);
+  document.getElementById('gm-d-sub').textContent=DETAIL_NAMES?DETAIL_IP:'';
+  document.getElementById('gm-detail-bg').style.display='flex';
+  loadDetail(1);
+}
+async function loadDetail(page){
+  if(page<1) page=1;
+  DETAIL_PAGE=page;
+  const r=document.getElementById('gm-ips-range').value;
+  const url='/api/glm/ip_detail?range='+encodeURIComponent(r)+'&ip='+encodeURIComponent(DETAIL_IP)+'&page='+page+'&page_size=50';
+  document.getElementById('gm-d-tbody').innerHTML='<tr><td colspan="9" class="gm-dim" style="text-align:center;padding:14px">加载中…</td></tr>';
+  try{
+    const d=await (await fetch(url)).json();
+    if(d.ok===false || d.error){
+      document.getElementById('gm-d-tbody').innerHTML='<tr><td colspan="9" class="gm-fail" style="text-align:center;padding:14px">'+(d.error||'加载失败')+'</td></tr>';
+      return;
+    }
+    renderDetail(d);
+  }catch(e){
+    document.getElementById('gm-d-tbody').innerHTML='<tr><td colspan="9" class="gm-fail" style="text-align:center;padding:14px">请求失败: '+e+'</td></tr>';
+  }
+}
+function renderDetail(d){
+  DETAIL_PAGES=d.pages||1; DETAIL_TOTAL=d.total||0;
+  // 标题副标题
+  document.getElementById('gm-d-title').textContent='请求明细 — '+(d.names||DETAIL_NAMES||DETAIL_IP);
+  document.getElementById('gm-d-sub').textContent=d.names?('IP '+DETAIL_IP):'';
+  // 上下文: vLLM 整体命中率 + 说明 + 条数
+  const vh=d.vllm_hit||{};
+  const vhStr=Object.keys(vh).length?Object.entries(vh).map(([be,v])=>be+' '+v+'%').join(' · '):'—';
+  const trunc=d.truncated?'<span style="color:#d97706"> · ⚠ 该范围超 2500 条上限, 仅显示最近 2500 条</span>':'';
+  document.getElementById('gm-d-ctx').innerHTML=
+    '<b>vLLM 整体前缀缓存命中率(最近)</b>: '+vhStr+
+    ' <span class="gm-dim">(整体统计, 非逐条)</span><br>'+
+    '<span class="gm-dim">KV占用 = 输入token − 缓存命中token (未命中部分需新算KV, 是真正占显存的近似值; 命中部分复用已有KV不新增显存)</span> · '+
+    '共 <b>'+DETAIL_TOTAL+'</b> 条'+trunc;
+  // 表格行
+  const rs=d.requests||[];
+  if(!rs.length){
+    document.getElementById('gm-d-tbody').innerHTML='<tr><td colspan="9" class="gm-dim" style="text-align:center;padding:14px">该 IP 在此范围无 GLM 请求</td></tr>';
+  }else{
+    document.getElementById('gm-d-tbody').innerHTML=rs.map(r=>{
+      const dur=r.duration_ms?(r.duration_ms/1000).toFixed(1)+'s':'-';
+      const pt=r.prompt_tokens||0;
+      const ptH=pt>=(d.big_threshold||200000)?'<span style="color:#dc2626;font-weight:700">'+ifTok(pt)+' ⚠</span>':'<span style="color:#d97706">'+ifTok(pt)+'</span>';
+      const kv=r.kv_tokens||0;
+      const kvH=kv>=50000?'<span style="color:#dc2626;font-weight:700">'+ifTok(kv)+' ⚠大</span>'
+        :kv>=10000?'<span style="color:#d97706">'+ifTok(kv)+'</span>'
+        :'<span class="gm-dim">'+ifTok(kv)+'</span>';
+      const ct=r.completion_tokens||0;
+      const ctH=ct?ifTok(ct):'<span class="gm-dim">—</span>';
+      const hr=r.hit_rate||0;
+      const hrH=hr>0?(hr.toFixed(1)+'%'):'<span class="gm-dim">—</span>';
+      const sh=r.status==='success'?'<span style="color:#16a34a">✓ 成功</span>'
+        :r.status==='failed'?'<span style="color:#dc2626">✗ 失败</span>'
+        :'<span class="gm-dim">'+esc(r.status||'-')+'</span>';
+      return '<tr><td class="gm-dim">'+esc(r.start||'-')+'</td>'+
+        '<td class="gm-dim">'+esc(r.end||'-')+'</td>'+
+        '<td>'+dur+'</td>'+
+        '<td class="tok">'+ptH+'</td>'+
+        '<td class="tok">'+kvH+'</td>'+
+        '<td class="tok">'+ctH+'</td>'+
+        '<td class="tok">'+hrH+'</td>'+
+        '<td>'+sh+'</td>'+
+        '<td class="gm-dim" style="font-size:11px">'+esc(r.model||'-')+'</td></tr>';
+    }).join('');
+  }
+  // 分页
+  document.getElementById('gm-d-pginfo').textContent=d.page+' / '+DETAIL_PAGES;
+  document.getElementById('gm-d-total').textContent='(共 '+DETAIL_TOTAL+' 条)';
+  document.getElementById('gm-d-prev').disabled=(d.page<=1);
+  document.getElementById('gm-d-next').disabled=(d.page>=DETAIL_PAGES);
+}
+function closeDetail(){document.getElementById('gm-detail-bg').style.display='none';}
+// 点遮罩关闭; ESC 关闭
+document.getElementById('gm-detail-bg').addEventListener('click',e=>{if(e.target.id==='gm-detail-bg')closeDetail();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDetail();});
+</script>
+{% endblock %}

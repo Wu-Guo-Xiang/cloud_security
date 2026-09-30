@@ -1,0 +1,66 @@
+# claude_audit server - single-container deployment
+#
+# Deploy on server:
+#   1. Copy the whole repo to server (or at least: claude_audit/ + docker/).
+#   2. cd <repo_root>
+#   3. docker compose -f docker/docker-compose.yml up -d --build
+#
+# Data persists in ./data on the host (auto-created).
+# Logs: docker compose -f docker/docker-compose.yml logs -f
+# Stop: docker compose -f docker/docker-compose.yml down
+
+services:
+  claude_audit:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: claude_audit:latest
+    container_name: claude_audit
+    restart: unless-stopped
+    environment:
+      # ── 登录认证(单一管理员,env 配置)──────────────────────────
+      # 上线前必须配置其一,否则登录被禁用(fail-closed,平台不可访问)
+      AUDIT_ADMIN_USER: admin
+      # 默认管理员凭证: admin / admin2026
+      AUDIT_ADMIN_PASSWORD_HASH: ""
+      AUDIT_ADMIN_PASSWORD: "admin2026"
+      # session 签名密钥;留空则每次重启随机(需重新登录)
+      AUDIT_SESSION_SECRET: "cloud-audit-docker-secret-2026"
+      # 反代终止 HTTPS 时设 1,开启 Secure cookie
+      AUDIT_BEHIND_HTTPS: "0"
+      # GLM 监控采集器容器互联地址
+      GLM_MONITOR_HOST: "http://glm_monitor:8790"
+    ports:
+      - "8787:8787"
+    volumes:
+      # SQLite DB + hook logs persist here on the host
+      - ./data:/data
+      # Override config without rebuilding image (edit ./config.yml on host)
+      - ./config.yml:/app/config.yml:ro
+      # 源码与模板目录热挂载: 宿主机修改代码/模板/规则即时在容器内生效
+      - ../claude_audit/claude_audit:/app/claude_audit
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8787/login', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  glm_monitor:
+    image: claude_audit:latest
+    pull_policy: never
+    container_name: glm_monitor
+    restart: unless-stopped
+    command: ["python", "/app/glm_monitor/monitor.py"]
+    environment:
+      GLM_MONITOR_DB: "/data/glm_monitor_data.db"
+      GLM_HTTP_PORT: "8790"
+      GLM_HTTP_HOST: "0.0.0.0"
+    ports:
+      - "8790:8790"
+    volumes:
+      - ./data:/data
+      - ../glm_monitor:/app/glm_monitor
+    depends_on:
+      - claude_audit
+

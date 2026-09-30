@@ -1,0 +1,11 @@
+{
+  "session_id": "sess_test_grep",
+  "transcript_path": "/tmp/transcript.jsonl",
+  "cwd": "D:\\云桌面安全\\test",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Grep",
+  "tool_input": {
+    "pattern": "password",
+    "path": "D:\\云桌面安全\\test\\projects"
+  }
+}

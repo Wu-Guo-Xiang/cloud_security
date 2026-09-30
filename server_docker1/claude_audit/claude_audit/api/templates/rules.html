@@ -1,0 +1,1317 @@
+{% extends "base.html" %}
+{% set active_page = 'rules' %}
+{% block title %}安全策略管理 · Cloud Security AI 日志监控平台{% endblock %}
+{% block topbar %}安全策略管理 (Managed HTTP Hooks 统一管控){% endblock %}
+{% block body %}
+
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+  <div>
+    <h1 style="margin:0 0 4px 0;">全局安全审计与阻断策略</h1>
+    <p style="margin:0; font-size:12px; color:#64748b;">
+      基于 Claude Code 原生 HTTP Hook 体系：服务端策略秒级下发生效，终端免安装 Python，无需更新插件包。
+    </p>
+  </div>
+  <div style="display:flex; gap:10px; align-items:center;">
+    <button class="btn" type="button" onclick="openAiRuleModal()" style="display:flex; align-items:center; gap:6px; background:linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color:#fff; border:none; padding:8px 16px; border-radius:6px; font-weight:600; font-size:13px; box-shadow:0 3px 10px rgba(79,70,229,0.3); cursor:pointer;">
+      <span>✨</span> <span>AI 智能策略工坊</span>
+    </button>
+    <button class="btn btn-primary" type="button" onclick="openRuleModal()" style="display:flex; align-items:center; gap:6px; padding:8px 14px; font-size:13px;">
+      <span>➕</span> <span>手动新增规则</span>
+    </button>
+    <button class="btn" type="button" onclick="reloadRules()" style="display:flex; align-items:center; gap:6px; background:#fff; border:1px solid #cbd5e1; padding:8px 14px; font-size:13px; cursor:pointer;">
+      <span>🔄</span> <span>热重载规则</span>
+    </button>
+  </div>
+</div>
+
+{# ── 统计卡片 ── #}
+<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:14px; margin-bottom:18px;">
+  <div class="filter-card" style="margin:0; padding:12px 16px;">
+    <div style="font-size:11px; color:#64748b; font-weight:600; text-transform:uppercase;">总激活规则</div>
+    <div style="font-size:24px; font-weight:700; color:#1e293b; margin-top:4px;" id="stat-total">{{ rules|length }}</div>
+  </div>
+  <div class="filter-card" style="margin:0; padding:12px 16px; border-left:4px solid #ef4444;">
+    <div style="font-size:11px; color:#ef4444; font-weight:600; text-transform:uppercase;">Critical 致命阻断</div>
+    <div style="font-size:24px; font-weight:700; color:#b91c1c; margin-top:4px;">
+      {{ rules | selectattr("severity", "equalto", "critical") | list | length }}
+    </div>
+  </div>
+  <div class="filter-card" style="margin:0; padding:12px 16px; border-left:4px solid #f97316;">
+    <div style="font-size:11px; color:#ea580c; font-weight:600; text-transform:uppercase;">High 高危阻断</div>
+    <div style="font-size:24px; font-weight:700; color:#c2410c; margin-top:4px;">
+      {{ rules | selectattr("severity", "equalto", "high") | list | length }}
+    </div>
+  </div>
+  <div class="filter-card" style="margin:0; padding:12px 16px; border-left:4px solid #eab308;">
+    <div style="font-size:11px; color:#ca8a04; font-weight:600; text-transform:uppercase;">Warn 提示确认</div>
+    <div style="font-size:24px; font-weight:700; color:#a16207; margin-top:4px;">
+      {{ rules | selectattr("severity", "equalto", "warn") | list | length }}
+    </div>
+  </div>
+  <div class="filter-card" style="margin:0; padding:12px 16px; border-left:4px solid #10b981;">
+    <div style="font-size:11px; color:#059669; font-weight:600; text-transform:uppercase;">Whitelist 白名单</div>
+    <div style="font-size:24px; font-weight:700; color:#047857; margin-top:4px;">
+      {{ rules | selectattr("severity", "in", ["allow", "whitelist"]) | list | length }}
+    </div>
+  </div>
+  <div class="filter-card" style="margin:0; padding:12px 16px; border-left:4px solid #3b82f6;">
+    <div style="font-size:11px; color:#2563eb; font-weight:600; text-transform:uppercase;">自定义规则集</div>
+    <div style="font-size:24px; font-weight:700; color:#1d4ed8; margin-top:4px;">
+      {{ rules | selectattr("file_name", "equalto", "custom_rules.yml") | list | length }}
+    </div>
+  </div>
+</div>
+
+{# ── 搜索与过滤 ── #}
+<div class="filter-card" style="margin-bottom:16px;">
+  <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+    <input type="text" id="rule-search" placeholder="🔍 搜索规则 ID、匹配表达式、拦截理由..." 
+           oninput="filterRules()" style="flex:1; min-width:240px; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; height:36px;">
+    <select id="severity-filter" onchange="filterRules()" style="padding:6px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; height:36px;">
+      <option value="">全部级别 (Severity)</option>
+      <option value="allow">Whitelist (白名单放行)</option>
+      <option value="critical">Critical (致命硬阻断)</option>
+      <option value="high">High (高危硬阻断)</option>
+      <option value="warn">Warn (警告需确认)</option>
+      <option value="info">Info (信息放行)</option>
+    </select>
+    <select id="tool-filter" onchange="filterRules()" style="padding:6px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; height:36px;">
+      <option value="">全部工具 (Tool)</option>
+      <option value="Bash">Bash</option>
+      <option value="Read">Read</option>
+      <option value="Write">Write</option>
+      <option value="Edit">Edit</option>
+      <option value="WebFetch">WebFetch</option>
+      <option value="UserPromptSubmit">UserPromptSubmit</option>
+    </select>
+    <div style="display:flex; align-items:center; gap:8px; margin-left:auto;">
+      <span id="rules-stat-info" style="font-size:12.5px; color:#64748b;">共 {{ rules|length }} 条策略</span>
+      <select id="rules-top-page-size" onchange="changeRulesPageSize(this.value)" style="padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; height:36px;">
+        <option value="10">10 条/页</option>
+        <option value="15" selected>15 条/页</option>
+        <option value="25">25 条/页</option>
+        <option value="50">50 条/页</option>
+        <option value="100">100 条/页</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+{# ── 规则表格 ── #}
+<div class="filter-card" style="padding:0; overflow:hidden;">
+  <table class="table" style="width:100%; border-collapse:collapse; font-size:13px; line-height:1.5;" id="rules-table">
+    <thead>
+      <tr style="background:#f8fafc; border-bottom:1px solid #e2e8f0; text-align:left;">
+        <th style="padding:12px 14px; font-weight:600; color:#334155;">规则 ID / 名称</th>
+        <th style="padding:12px 14px; font-weight:600; color:#334155;">范围 (When)</th>
+        <th style="padding:12px 14px; font-weight:600; color:#334155;">级别 (Severity)</th>
+        <th style="padding:12px 14px; font-weight:600; color:#334155;">拦截匹配策略 (Match)</th>
+        <th style="padding:12px 14px; font-weight:600; color:#334155;">处置说明 (Reason)</th>
+        <th style="padding:12px 14px; font-weight:600; color:#334155;">归属规则集</th>
+        <th style="padding:12px 14px; text-align:center; font-weight:600; color:#334155;">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rules %}
+      <tr class="rule-row" id="rule-row-{{ r.id }}" data-id="{{ r.id }}" style="border-bottom:1px solid #f1f5f9;">
+        <td style="padding:12px 14px; font-weight:600; color:#0f172a;">
+          <span class="rule-id-badge">{{ r.id }}</span>
+        </td>
+        <td style="padding:12px 14px;">
+          {% if r.when.get('tool') %}
+            <span class="pill" style="background:#e0f2fe; color:#0369a1;">Tool: {{ r.when.tool }}</span>
+          {% elif r.when.get('event') %}
+            <span class="pill" style="background:#ede9fe; color:#6d28d9;">Event: {{ r.when.event }}</span>
+          {% else %}
+            <span class="pill" style="background:#f1f5f9; color:#475569;">全局通用</span>
+          {% endif %}
+        </td>
+        <td style="padding:10px 14px;">
+          {% if r.severity in ('allow', 'whitelist') %}
+            <span style="background:#dcfce7; color:#166534; padding:2px 8px; border-radius:10px; font-weight:700; font-size:11px;">WHITELIST 白名单</span>
+          {% elif r.severity == 'critical' %}
+            <span style="background:#fee2e2; color:#991b1b; padding:2px 8px; border-radius:10px; font-weight:600; font-size:11px;">CRITICAL 阻断</span>
+          {% elif r.severity == 'high' %}
+            <span style="background:#ffedd5; color:#9a3412; padding:2px 8px; border-radius:10px; font-weight:600; font-size:11px;">HIGH 阻断</span>
+          {% elif r.severity == 'warn' %}
+            <span style="background:#fef9c3; color:#854d0e; padding:2px 8px; border-radius:10px; font-weight:600; font-size:11px;">WARN 确认</span>
+          {% else %}
+            <span style="background:#f1f5f9; color:#475569; padding:2px 8px; border-radius:10px; font-size:11px;">INFO 放行</span>
+          {% endif %}
+        </td>
+        <td style="padding:10px 14px; max-width:340px;">
+          {% for k, v in r.match.items() %}
+            <div style="margin-bottom:6px;">
+              {% if k.endswith('_contains') %}
+                <span style="background:#e0f2fe; color:#0369a1; padding:2px 7px; border-radius:4px; font-size:11px; font-weight:600;">包含词</span>
+                <span style="color:#64748b; font-size:12px; margin-left:3px;">{{ k[:-9] }}:</span><br>
+                {% if v is sequence and v is not string %}
+                  {% for item in v %}
+                    <span style="background:#f8fafc; color:#0f172a; border:1px solid #cbd5e1; padding:2px 7px; border-radius:4px; font-size:12px; display:inline-block; margin:3px 3px 0 0;">{{ item }}</span>
+                  {% endfor %}
+                {% else %}
+                  <code style="word-break:break-all; background:#f8fafc; padding:3px 6px; border:1px solid #e2e8f0; border-radius:4px; display:inline-block; font-size:12px;">{{ v }}</code>
+                {% endif %}
+              {% elif k.endswith('_glob') %}
+                <span style="background:#ffedd5; color:#c2410c; padding:2px 7px; border-radius:4px; font-size:11px; font-weight:600;">通配符</span>
+                <span style="color:#64748b; font-size:12px; margin-left:3px;">{{ k[:-5] }}:</span><br>
+                <code style="word-break:break-all; background:#f8fafc; padding:3px 6px; border:1px solid #e2e8f0; border-radius:4px; display:inline-block; font-size:12px; color:#c2410c;">{{ v }}</code>
+              {% elif k.endswith('_startswith') %}
+                <span style="background:#dcfce7; color:#15803d; padding:2px 7px; border-radius:4px; font-size:11px; font-weight:600;">前缀</span>
+                <span style="color:#64748b; font-size:12px; margin-left:3px;">{{ k[:-11] }}:</span><br>
+                <code style="word-break:break-all; background:#f8fafc; padding:3px 6px; border:1px solid #e2e8f0; border-radius:4px; display:inline-block; font-size:12px;">{{ v }}</code>
+              {% elif k.endswith('_endswith') %}
+                <span style="background:#f3e8ff; color:#7e22ce; padding:2px 7px; border-radius:4px; font-size:11px; font-weight:600;">后缀</span>
+                <span style="color:#64748b; font-size:12px; margin-left:3px;">{{ k[:-9] }}:</span><br>
+                {% if v is sequence and v is not string %}
+                  {% for item in v %}
+                    <span style="background:#faf5ff; color:#6b21a8; border:1px solid #e9d5ff; padding:2px 7px; border-radius:4px; font-size:12px; display:inline-block; margin:3px 3px 0 0;">{{ item }}</span>
+                  {% endfor %}
+                {% else %}
+                  <code style="word-break:break-all; background:#f8fafc; padding:3px 6px; border:1px solid #e2e8f0; border-radius:4px; display:inline-block; font-size:12px;">{{ v }}</code>
+                {% endif %}
+              {% elif k.endswith('_exact') %}
+                <span style="background:#f1f5f9; color:#334155; padding:2px 7px; border-radius:4px; font-size:11px; font-weight:600;">精确</span>
+                <span style="color:#64748b; font-size:12px; margin-left:3px;">{{ k[:-6] }}:</span><br>
+                <code style="word-break:break-all; background:#f8fafc; padding:3px 6px; border:1px solid #e2e8f0; border-radius:4px; display:inline-block; font-size:12px;">{{ v }}</code>
+              {% else %}
+                <span style="background:#fae8ff; color:#a21caf; padding:2px 7px; border-radius:4px; font-size:11px; font-weight:600;">正则</span>
+                <span style="color:#64748b; font-size:12px; margin-left:3px;">{{ k[:-6] if k.endswith('_regex') else k }}:</span><br>
+                <code style="word-break:break-all; background:#f8fafc; padding:3px 6px; border:1px solid #e2e8f0; border-radius:4px; display:inline-block; font-size:12px;">{{ v }}</code>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </td>
+        <td style="padding:12px 14px; color:#1e293b; font-size:13px; font-weight:500;">
+          {{ r.reason }}
+        </td>
+        <td style="padding:12px 14px; color:#64748b; font-size:12px;">
+          <span>{{ r.file_name }}</span>
+        </td>
+        <td style="padding:12px 14px; text-align:center; white-space:nowrap;">
+          <button class="btn" type="button" onclick="editRuleById('{{ r.id }}')" 
+                  style="padding:4px 10px; font-size:12px; margin-right:4px; border:1px solid #cbd5e1; border-radius:4px; background:#fff; cursor:pointer;">编辑</button>
+          <button class="btn" type="button" onclick="deleteRule('{{ r.id }}')" 
+                  style="padding:4px 10px; font-size:12px; color:#dc2626; border:1px solid #fca5a5; border-radius:4px; background:#fff; cursor:pointer;">删除</button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{# ── 策略分页导航 ── #}
+<nav class="ps-pager" id="rules-pager" style="margin-top:14px; padding:10px 16px; background:#fff; border:1px solid #e2e8f0; border-radius:8px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;"></nav>
+
+{# ── 新增/编辑规则弹窗 ── #}
+<div id="rule-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center;">
+  <div style="background:#fff; border-radius:8px; width:620px; max-width:92%; padding:24px; box-shadow:0 10px 25px rgba(0,0,0,0.25);">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+      <h3 id="modal-title" style="margin:0; font-size:16px; color:#0f172a;">新增安全策略</h3>
+      <button type="button" onclick="closeRuleModal()" style="border:none; background:none; font-size:18px; cursor:pointer; color:#64748b;">✕</button>
+    </div>
+
+    <form id="rule-form" onsubmit="saveRuleForm(event)">
+      <div class="filter-item" style="margin-bottom:14px;">
+        <label for="form-id" style="font-weight:600; font-size:13px; color:#1e293b; margin-bottom:4px;">规则名称 / 唯一标识 (ID) *</label>
+        <input type="text" id="form-id" name="id" required placeholder="支持中英文，如: 禁止登录服务器 或 block_salary_keywords" style="padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; height:38px; width:100%; box-sizing:border-box;">
+        <span class="hint" style="color:#64748b; font-size:12px; margin-top:4px;">支持中文、英文、数字、下划线及中划线（作为全局唯一规则标识）</span>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+        <div class="filter-item">
+          <label for="form-when-type" style="font-weight:600; font-size:13px; color:#1e293b; margin-bottom:4px;">生效范围 (Scope)</label>
+          <select id="form-when-type" onchange="updateMatchTarget()" style="padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; height:38px;">
+            <option value="UserPromptSubmit">UserPromptSubmit 用户提示词</option>
+            <option value="Bash">Bash 终端命令</option>
+            <option value="Read">Read 文件读取</option>
+            <option value="Write">Write 文件写入</option>
+            <option value="Edit">Edit 文件修改</option>
+            <option value="WebFetch">WebFetch 网页获取</option>
+            <option value="all">全局所有工具</option>
+          </select>
+        </div>
+        <div class="filter-item">
+          <label for="form-severity" style="font-weight:600; font-size:13px; color:#1e293b; margin-bottom:4px;">严重级别 (处置动作) *</label>
+          <select id="form-severity" required style="padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; height:38px;">
+            <option value="allow">✅ Whitelist (白名单放行 - 优先豁免一切阻断)</option>
+            <option value="critical">⛔ Critical (致命直接硬阻断 - 绝不弹窗)</option>
+            <option value="high">⚠️ High (高危直接硬阻断 - 绝不弹窗)</option>
+            <option value="warn">🔔 Warn (软警告需确认 - 用户弹窗决定是否上传)</option>
+            <option value="info">ℹ️ Info (放行，仅记录审计日志)</option>
+          </select>
+        </div>
+      </div>
+
+      {# ── 易用型双级模式选择器 ── #}
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+        <div class="filter-item">
+          <label for="form-match-mode" style="font-weight:600; font-size:13px; color:#1e293b; margin-bottom:4px;">匹配方式 (Match Mode) *</label>
+          <select id="form-match-mode" onchange="onMatchModeChange()" style="padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; height:38px;">
+            <option value="contains">🔤 包含关键词 (Contains) - 推荐/最易读</option>
+            <option value="glob">🌐 通配符匹配 (Wildcard / Glob)</option>
+            <option value="startswith">⚡ 前缀匹配 (Starts With)</option>
+            <option value="endswith">🔚 后缀匹配 (Ends With)</option>
+            <option value="exact">🎯 精确全等匹配 (Exact)</option>
+            <option value="regex">⚙️ 正则表达式 (Regex) - 高级</option>
+          </select>
+        </div>
+        <div class="filter-item">
+          <label for="form-match-field" style="font-weight:600; font-size:13px; color:#1e293b; margin-bottom:4px;">检测目标字段 (Field) *</label>
+          <select id="form-match-field" style="padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; height:38px;">
+            <option value="prompt_text">prompt_text (用户提问/提示词)</option>
+            <option value="bash_command">bash_command (终端执行命令)</option>
+            <option value="file_path">file_path (操作文件路径)</option>
+            <option value="url">url (网页或请求地址)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="filter-item" style="margin-bottom:14px;">
+        <label for="form-pattern" id="lbl-form-pattern" style="font-weight:600; font-size:13px; color:#1e293b; margin-bottom:4px;">匹配内容 (Pattern) *</label>
+        <input type="text" id="form-pattern" required placeholder="如: 密码, 密钥, token, 身份证, 薪资" style="padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; height:38px; width:100%; box-sizing:border-box;">
+        <span class="hint" id="hint-form-pattern" style="color:#64748b; font-size:12px; margin-top:4px;">支持输入多个敏感词，使用逗号、顿号或空格隔开，命中任意一个即拦截（自动忽略大小写）</span>
+      </div>
+
+      <div class="filter-item" style="margin-bottom:14px;">
+        <label for="form-reason" style="font-weight:600; font-size:13px; color:#1e293b; margin-bottom:4px;">拦截理由 / 策略说明 *</label>
+        <input type="text" id="form-reason" required placeholder="如: 检测到敏感商业机密词汇，已被企业网关阻断" style="padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; height:38px; width:100%; box-sizing:border-box;">
+        <span class="hint" style="color:#64748b; font-size:12px; margin-top:4px;">触发阻断或警告时，此信息将直接反馈给开发终端及日志审计中心</span>
+      </div>
+
+      <div class="filter-item" style="margin-bottom:20px;">
+        <label for="form-file" style="font-weight:600; font-size:13px; color:#1e293b; margin-bottom:4px;">保存目标文件</label>
+        <input type="text" id="form-file" value="custom_rules.yml" placeholder="custom_rules.yml" style="padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; height:38px; width:100%; box-sizing:border-box;">
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button type="button" class="btn" onclick="closeRuleModal()" style="border:1px solid #cbd5e1; background:#fff; cursor:pointer; height:36px; padding:0 16px; border-radius:6px; font-size:13px;">取消</button>
+        <button type="submit" class="btn btn-primary" id="btn-save-rule" style="height:36px; padding:0 18px; border-radius:6px; font-size:13px; font-weight:600;">保存策略并立即生效</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# ── AI 智能策略工坊弹窗 ── #}
+<div id="ai-rule-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.65); backdrop-filter:blur(3px); z-index:1100; align-items:center; justify-content:center; padding:20px 0;">
+  <div style="background:#fff; border-radius:12px; width:840px; max-width:95%; max-height:92vh; display:flex; flex-direction:column; box-shadow:0 20px 40px rgba(0,0,0,0.3); overflow:hidden; border:1px solid #cbd5e1;">
+    
+    {# 弹窗 Header #}
+    <div style="padding:16px 22px; background:linear-gradient(135deg, #1e1b4b 0%, #312e81 60%, #4338ca 100%); color:#fff; display:flex; justify-content:space-between; align-items:center;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span style="font-size:22px;">✨</span>
+        <div>
+          <h3 style="margin:0; font-size:16px; font-weight:700; color:#fff; letter-spacing:0.3px;">AI 智能策略工坊</h3>
+          <p style="margin:2px 0 0 0; font-size:12px; color:#c7d2fe;">自然语言定义安全意图 · 大模型自动编写规则与严密正则 · 真实沙箱双向自测验证后一键启用</p>
+        </div>
+      </div>
+      <button type="button" onclick="closeAiRuleModal()" style="border:none; background:rgba(255,255,255,0.15); width:30px; height:30px; border-radius:50%; font-size:16px; cursor:pointer; color:#fff; display:flex; align-items:center; justify-content:center; transition:all 0.2s;">✕</button>
+    </div>
+
+    {# 弹窗主体滚动区 #}
+    <div style="padding:18px 22px; overflow-y:auto; flex:1;">
+
+      {# 快捷推荐场景 #}
+      <div style="margin-bottom:14px;">
+        <div style="font-size:12px; font-weight:600; color:#64748b; margin-bottom:8px;">💡 快捷常用场景推荐（点击一键填充需求）：</div>
+        <div style="display:flex; flex-wrap:wrap; gap:8px;">
+          <button type="button" class="ai-template-chip" onclick="fillAiTemplate('禁止使用 python 或 bash 删除任何以 .log 结尾的文件，防止运行日志被篡改或清空', 'Bash', 'critical')" style="font-size:12px; padding:4px 10px; background:#f1f5f9; border:1px solid #cbd5e1; border-radius:16px; cursor:pointer; color:#334155;">🚫 禁止删除 .log 日志</button>
+          <button type="button" class="ai-template-chip" onclick="fillAiTemplate('禁止终端或代码查看、编辑或读取生产环境配置文件 .env 以及 *.pem *.key 私钥凭据', 'Read', 'critical')" style="font-size:12px; padding:4px 10px; background:#f1f5f9; border:1px solid #cbd5e1; border-radius:16px; cursor:pointer; color:#334155;">🛡️ 防窃取 .env 与密钥</button>
+          <button type="button" class="ai-template-chip" onclick="fillAiTemplate('严禁执行任何 git push --force 或带有强制覆盖远端分支选项的 git 破坏性操作', 'Bash', 'critical')" style="font-size:12px; padding:4px 10px; background:#f1f5f9; border:1px solid #cbd5e1; border-radius:16px; cursor:pointer; color:#334155;">⚡ 拦截 git 强推覆盖</button>
+          <button type="button" class="ai-template-chip" onclick="fillAiTemplate('拦截用户提示词中包含客户手机号、18位身份证号等敏感隐私数据，防止外传泄露', 'UserPromptSubmit', 'critical')" style="font-size:12px; padding:4px 10px; background:#f1f5f9; border:1px solid #cbd5e1; border-radius:16px; cursor:pointer; color:#334155;">🔒 拦截身份证/手机号</button>
+          <button type="button" class="ai-template-chip" onclick="fillAiTemplate('禁止使用 curl 或 wget 向常见公开文本分享或网盘网站 (如 pastebin, filebin, transfer.sh) 上传外发数据', 'Bash', 'high')" style="font-size:12px; padding:4px 10px; background:#f1f5f9; border:1px solid #cbd5e1; border-radius:16px; cursor:pointer; color:#334155;">🌐 禁止网络外发数据</button>
+          <button type="button" class="ai-template-chip" onclick="fillAiTemplate('严禁通过 base64 管道解密执行、eval 命令替换或 python -c 直接调用系统模块运行未知脚本包装命令', 'Bash', 'critical')" style="font-size:12px; padding:4px 10px; background:#f1f5f9; border:1px solid #cbd5e1; border-radius:16px; cursor:pointer; color:#334155;">🛡️ 拦截包装器执行 (eval/base64/python -c)</button>
+          <button type="button" class="ai-template-chip" onclick="fillAiTemplate('严禁在终端中直接导出或倾倒系统完整环境变量 (如 printenv, env, export -p, Get-ChildItem env:)，防止敏感密钥泄露', 'Bash', 'high')" style="font-size:12px; padding:4px 10px; background:#f1f5f9; border:1px solid #cbd5e1; border-radius:16px; cursor:pointer; color:#334155;">🔑 严禁导出环境变量 (env/printenv)</button>
+          <button type="button" class="ai-template-chip" onclick="fillAiTemplate('严禁在环境中建立反弹 Shell (Reverse Shell) 或交互式网络后门 (如 nc -e, ncat, socat, /dev/tcp/)', 'Bash', 'critical')" style="font-size:12px; padding:4px 10px; background:#f1f5f9; border:1px solid #cbd5e1; border-radius:16px; cursor:pointer; color:#334155;">🚨 阻断反弹Shell/网络后门 (nc/socat)</button>
+          <button type="button" class="ai-template-chip" onclick="fillAiTemplate('严禁篡改用户 Shell 启动脚本 (.bashrc, .profile)、计划任务 (crontab) 或 Windows 注册表自启动项', 'Bash', 'critical')" style="font-size:12px; padding:4px 10px; background:#f1f5f9; border:1px solid #cbd5e1; border-radius:16px; cursor:pointer; color:#334155;">🔒 严禁篡改自启动项 (.bashrc/crontab)</button>
+        </div>
+      </div>
+
+      {# 需求输入区域 #}
+      <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:14px; margin-bottom:16px;">
+        <label for="ai-req-input" style="display:block; font-weight:700; font-size:13px; color:#1e293b; margin-bottom:6px;">
+          📝 请输入您的安全管控需求 (自然语言描述)：
+        </label>
+        <textarea id="ai-req-input" rows="3" placeholder="例如：禁止使用 python 或 bash 删除任何以 .log 结尾的文件，防止篡改运行日志..." style="width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; line-height:1.5; resize:vertical;"></textarea>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr auto; gap:12px; align-items:center; margin-top:10px;">
+          <div>
+            <label style="font-size:12px; color:#64748b; font-weight:600;">期望生效范围 (Scope)</label>
+            <select id="ai-scope-hint" style="width:100%; padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px; height:36px; margin-top:3px;">
+              <option value="">🤖 AI 智能自适应判断</option>
+              <option value="Bash">Bash 终端执行命令</option>
+              <option value="UserPromptSubmit">UserPromptSubmit 用户提问提示词</option>
+              <option value="Read">Read 文件读取</option>
+              <option value="Write">Write / Edit 文件写入修改</option>
+              <option value="WebFetch">WebFetch 网页获取</option>
+              <option value="all">全局工具通用</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:12px; color:#64748b; font-weight:600;">期望严重级别 (Severity)</label>
+            <select id="ai-severity-hint" style="width:100%; padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px; height:36px; margin-top:3px;">
+              <option value="critical">⛔ Critical (致命硬阻断 - 首选)</option>
+              <option value="high">⚠️ High (高危硬阻断)</option>
+              <option value="warn">🔔 Warn (软警告需用户确认)</option>
+              <option value="allow">✅ Whitelist (白名单放行)</option>
+            </select>
+          </div>
+          <div style="align-self:flex-end;">
+            <button type="button" id="btn-trigger-ai" onclick="runAiGenerateAndTest()" style="height:36px; padding:0 20px; background:linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color:#fff; border:none; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer; display:flex; align-items:center; gap:6px; box-shadow:0 2px 6px rgba(79,70,229,0.3);">
+              <span>🤖</span> <span>编写规则并自测</span>
+            </button>
+          </div>
+        </div>
+
+        {# 生成进度 Loading 提示 #}
+        <div id="ai-loading-box" style="display:none; margin-top:14px; padding:12px; background:#eff6ff; border:1px dashed #93c5fd; border-radius:6px; text-align:center;">
+          <div style="display:inline-block; font-size:18px;">⚙️</div>
+          <span style="font-size:13px; font-weight:600; color:#1d4ed8; margin-left:8px;" id="ai-loading-text">正在调用大模型编写检测规则与严密正则表达式...</span>
+          <div style="font-size:11.5px; color:#3b82f6; margin-top:4px;">生成完成后将立即在后台沙箱自动运行高危攻击用例与业务放行用例双向自测</div>
+        </div>
+      </div>
+
+      {# 结果与自测面板 (默认隐藏，生成成功后展现) #}
+      <div id="ai-result-panel" style="display:none;">
+
+        {# 自测结果通过率 Banner #}
+        <div id="ai-test-banner" style="padding:14px 16px; border-radius:8px; margin-bottom:14px; display:flex; align-items:center; justify-content:space-between; gap:12px;">
+          <div>
+            <div id="ai-test-title" style="font-size:15px; font-weight:700;"></div>
+            <div id="ai-test-subtitle" style="font-size:12px; margin-top:3px; opacity:0.9;"></div>
+          </div>
+          <div id="ai-test-metrics" style="display:flex; gap:8px;"></div>
+        </div>
+
+        {# 设计思路解释 #}
+        <div id="ai-explanation-box" style="background:#f1f5f9; border-left:4px solid #6366f1; padding:10px 14px; border-radius:4px; font-size:12.5px; color:#334155; line-height:1.6; margin-bottom:14px;"></div>
+
+        {# 双向测试用例清单展示 #}
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:16px;">
+          
+          {# 左：正向拦截样本 #}
+          <div style="border:1px solid #fecaca; background:#fff5f5; border-radius:8px; padding:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <span style="font-size:12.5px; font-weight:700; color:#991b1b; display:flex; align-items:center; gap:5px;">
+                <span>🚨</span> <span>高危拦截测试样本 (必须阻断)</span>
+              </span>
+              <span id="ai-pos-stat-badge" style="font-size:11px; font-weight:700; background:#fee2e2; color:#b91c1c; padding:2px 8px; border-radius:10px;"></span>
+            </div>
+            <div id="ai-positive-cases-list" style="display:flex; flex-direction:column; gap:6px; max-height:180px; overflow-y:auto;"></div>
+          </div>
+
+          {# 右：负向放行样本 #}
+          <div style="border:1px solid #bbf7d0; background:#f0fdf4; border-radius:8px; padding:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <span style="font-size:12.5px; font-weight:700; color:#166534; display:flex; align-items:center; gap:5px;">
+                <span>✅</span> <span>合法业务测试样本 (必须放行)</span>
+              </span>
+              <span id="ai-neg-stat-badge" style="font-size:11px; font-weight:700; background:#dcfce7; color:#15803d; padding:2px 8px; border-radius:10px;"></span>
+            </div>
+            <div id="ai-negative-cases-list" style="display:flex; flex-direction:column; gap:6px; max-height:180px; overflow-y:auto;"></div>
+          </div>
+        </div>
+
+        {# 生成的规则配置微调表单 #}
+        <div style="border:1px solid #cbd5e1; border-radius:8px; padding:14px; background:#fff; margin-bottom:14px;">
+          <div style="font-size:13px; font-weight:700; color:#1e293b; margin-bottom:12px; display:flex; align-items:center; justify-content:space-between;">
+            <span>⚙️ 策略规则生成明细 (支持即时微调)</span>
+            <span style="font-size:11px; color:#64748b; font-weight:normal;">微调后可随时重新点击右侧测试</span>
+          </div>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:10px;">
+            <div>
+              <label style="font-size:12px; color:#475569; font-weight:600;">规则唯一标识 (ID) *</label>
+              <input type="text" id="ai-rule-id" style="width:100%; box-sizing:border-box; padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px; height:34px; margin-top:2px;">
+            </div>
+            <div>
+              <label style="font-size:12px; color:#475569; font-weight:600;">严重级别 (Severity) *</label>
+              <select id="ai-rule-severity" style="width:100%; padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px; height:34px; margin-top:2px;">
+                <option value="critical">⛔ Critical (致命硬阻断)</option>
+                <option value="high">⚠️ High (高危硬阻断)</option>
+                <option value="warn">🔔 Warn (软警告需确认)</option>
+                <option value="allow">✅ Whitelist (白名单放行)</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:10px;">
+            <div>
+              <label style="font-size:12px; color:#475569; font-weight:600;">检测目标字段 (Field)</label>
+              <select id="ai-rule-field" style="width:100%; padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px; height:34px; margin-top:2px;">
+                <option value="bash_command">bash_command (终端执行命令)</option>
+                <option value="prompt_text">prompt_text (用户提问提示词)</option>
+                <option value="file_path">file_path (操作文件路径)</option>
+                <option value="url">url (网络请求地址)</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:12px; color:#475569; font-weight:600;">匹配方式 (Match Mode)</label>
+              <select id="ai-rule-mode" style="width:100%; padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px; height:34px; margin-top:2px;">
+                <option value="regex">⚙️ 正则表达式 (Regex)</option>
+                <option value="contains">🔤 包含关键词 (Contains)</option>
+                <option value="glob">🌐 通配符 (Glob)</option>
+                <option value="startswith">⚡ 前缀 (Starts With)</option>
+                <option value="endswith">🔚 后缀 (Ends With)</option>
+                <option value="exact">🎯 精确全等 (Exact)</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="margin-bottom:10px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
+              <label style="font-size:12px; color:#475569; font-weight:600;">匹配表达式 / 正则模式 (Pattern) *</label>
+              <button type="button" onclick="reRunSandboxTest()" style="border:none; background:none; color:#4f46e5; font-size:12px; cursor:pointer; font-weight:600;">🔄 重新运行沙箱自测</button>
+            </div>
+            <textarea id="ai-rule-pattern" rows="2" style="width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; font-family:Consolas, monospace; background:#f8fafc; color:#0f172a;"></textarea>
+          </div>
+
+          <div>
+            <label style="font-size:12px; color:#475569; font-weight:600;">阻断理由 / 处置说明 (Reason) *</label>
+            <input type="text" id="ai-rule-reason" style="width:100%; box-sizing:border-box; padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12.5px; height:34px; margin-top:2px;">
+          </div>
+        </div>
+
+        {# 即时单用例 Playground #}
+        <div style="background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; padding:12px; margin-bottom:6px;">
+          <div style="font-size:12px; font-weight:600; color:#475569; margin-bottom:6px;">🧪 自定义单条快速验证 (Playground):</div>
+          <div style="display:flex; gap:8px;">
+            <input type="text" id="ai-custom-test-input" placeholder="输入任意命令或文本测试当前规则，如: python -c 'import os; os.remove(\'test.log\')'" style="flex:1; padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; font-family:Consolas, monospace;">
+            <button type="button" onclick="testCustomSingleCase()" style="padding:0 14px; background:#475569; color:#fff; border:none; border-radius:6px; font-size:12px; cursor:pointer;">立即测试</button>
+          </div>
+          <div id="ai-custom-test-result" style="margin-top:6px; font-size:12px; display:none;"></div>
+        </div>
+
+      </div>
+
+    </div>
+
+    {# 弹窗 Footer 操作栏 #}
+    <div style="padding:14px 22px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
+      <button type="button" class="btn" onclick="closeAiRuleModal()" style="border:1px solid #cbd5e1; background:#fff; padding:6px 16px; border-radius:6px; font-size:13px; cursor:pointer;">关闭</button>
+      
+      <div style="display:flex; gap:10px; align-items:center;" id="ai-footer-actions">
+        <button type="button" class="btn" onclick="openManualModalWithAiData()" id="btn-ai-to-manual" style="display:none; border:1px solid #cbd5e1; background:#fff; padding:6px 14px; border-radius:6px; font-size:13px; cursor:pointer;">转为手动模式编辑</button>
+        <button type="button" class="btn" onclick="applyAndEnableAiRule()" id="btn-ai-apply" style="display:none; background:#16a34a; color:#fff; border:none; padding:8px 22px; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer; box-shadow:0 2px 8px rgba(22,163,74,0.35);">
+          🚀 测试通过，立即启用规则
+        </button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// 将服务端传入的所有规则注入到全局 JS 对象中，避免在 HTML 属性中嵌套引号导致的解析崩溃
+var ALL_RULES = {{ rules | tojson }};
+var RULES_MAP = {};
+ALL_RULES.forEach(function(r) {
+  if (r && r.id) {
+    RULES_MAP[r.id] = r;
+  }
+});
+
+var rulesState = {
+  all: ALL_RULES,
+  filteredIds: [],
+  page: 1,
+  pageSize: 15
+};
+
+function filterRules() {
+  var q = document.getElementById('rule-search').value.toLowerCase().trim();
+  var sev = document.getElementById('severity-filter').value.toLowerCase();
+  var tool = document.getElementById('tool-filter').value;
+  var rows = document.querySelectorAll('.rule-row');
+
+  var matched = [];
+  rows.forEach(function(row) {
+    var id = row.getAttribute('data-id');
+    var r = RULES_MAP[id] || {};
+    var idLower = (r.id || '').toLowerCase();
+    var sevLower = (r.severity || '').toLowerCase();
+    var reasonLower = (r.reason || '').toLowerCase();
+    var whenStr = JSON.stringify(r.when || {}).toLowerCase();
+    var matchStr = JSON.stringify(r.match || {}).toLowerCase();
+
+    var matchesQ = !q || idLower.includes(q) || reasonLower.includes(q) || matchStr.includes(q);
+    var matchesSev = !sev || (sev === 'allow' ? (sevLower === 'allow' || sevLower === 'whitelist') : sevLower === sev);
+    var matchesTool = !tool || whenStr.includes(tool.toLowerCase());
+
+    if (matchesQ && matchesSev && matchesTool) {
+      matched.push(id);
+    }
+  });
+
+  rulesState.filteredIds = matched;
+  rulesState.page = 1;
+  renderRulesTable();
+}
+
+function changeRulesPageSize(size) {
+  var sz = parseInt(size, 10) || 15;
+  rulesState.pageSize = sz;
+  rulesState.page = 1;
+  var topSel = document.getElementById('rules-top-page-size');
+  if (topSel) topSel.value = sz;
+  var btmSel = document.getElementById('rules-bottom-page-size');
+  if (btmSel) btmSel.value = sz;
+  renderRulesTable();
+}
+
+function renderRulesTable() {
+  var total = rulesState.filteredIds.length;
+  var pageSize = rulesState.pageSize;
+  var totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  if (rulesState.page > totalPages) {
+    rulesState.page = totalPages;
+  }
+  var p = rulesState.page;
+
+  var startIdx = (p - 1) * pageSize;
+  var endIdx = Math.min(startIdx + pageSize, total);
+  var activeSlice = rulesState.filteredIds.slice(startIdx, endIdx);
+  var activeIdMap = {};
+  activeSlice.forEach(function(id) { activeIdMap[id] = true; });
+
+  var rows = document.querySelectorAll('.rule-row');
+  rows.forEach(function(row) {
+    var id = row.getAttribute('data-id');
+    if (activeIdMap[id]) {
+      row.style.display = '';
+    } else {
+      row.style.display = 'none';
+    }
+  });
+
+  // 空状态处理
+  var emptyRow = document.getElementById('rules-empty-row');
+  if (total === 0) {
+    if (!emptyRow) {
+      var tbody = document.querySelector('#rules-table tbody');
+      if (tbody) {
+        emptyRow = document.createElement('tr');
+        emptyRow.id = 'rules-empty-row';
+        emptyRow.innerHTML = '<td colspan="7" style="padding:28px; text-align:center; color:#94a3b8; font-size:13px;">未找到符合过滤条件的安全策略规则</td>';
+        tbody.appendChild(emptyRow);
+      }
+    } else {
+      emptyRow.style.display = '';
+    }
+  } else if (emptyRow) {
+    emptyRow.style.display = 'none';
+  }
+
+  // 统计信息
+  var statInfo = document.getElementById('rules-stat-info');
+  if (statInfo) {
+    statInfo.textContent = '共 ' + total + ' 条策略';
+  }
+
+  // 渲染分页导航
+  var pager = document.getElementById('rules-pager');
+  renderRulesPager(pager, total, totalPages, p, total === 0 ? 0 : startIdx + 1, endIdx);
+}
+
+function renderRulesPager(container, total, totalPages, p, startNum, endNum) {
+  if (!container) return;
+  if (total === 0) {
+    container.innerHTML = '<span style="font-size:12px; color:#94a3b8;">无匹配策略</span>';
+    return;
+  }
+
+  var leftHtml = '<div style="display:flex; align-items:center; gap:8px;">'
+    + '<span style="font-size:12.5px; color:#64748b;">显示第 ' + startNum + ' - ' + endNum + ' 条，共 ' + total + ' 条 (第 ' + p + '/' + totalPages + ' 页)</span>'
+    + '<span style="font-size:12px; color:#cbd5e1;">|</span>'
+    + '<label for="rules-bottom-page-size" style="font-size:12px; color:#64748b;">每页:</label>'
+    + '<select id="rules-bottom-page-size" onchange="changeRulesPageSize(this.value)" style="padding:3px 6px; font-size:12px; border:1px solid #cbd5e1; border-radius:4px;">';
+
+  [10, 15, 25, 50, 100].forEach(function(n) {
+    leftHtml += '<option value="' + n + '"' + (n === rulesState.pageSize ? ' selected' : '') + '>' + n + ' 条/页</option>';
+  });
+  leftHtml += '</select></div>';
+
+  var rightHtml = '<div style="display:flex; align-items:center; gap:5px;">';
+  rightHtml += '<button type="button" class="btn" style="padding:3px 10px; font-size:12px;" onclick="goRulesPage(' + (p - 1) + ')"' + (p <= 1 ? ' disabled' : '') + '>上一页</button>';
+
+  var pages = [];
+  if (totalPages <= 7) {
+    for (var i = 1; i <= totalPages; i++) pages.push(i);
+  } else {
+    pages.push(1);
+    var lo = Math.max(2, p - 2);
+    var hi = Math.min(totalPages - 1, p + 2);
+    if (lo > 2) pages.push('...');
+    for (var j = lo; j <= hi; j++) pages.push(j);
+    if (hi < totalPages - 1) pages.push('...');
+    pages.push(totalPages);
+  }
+
+  pages.forEach(function(n) {
+    if (n === '...') {
+      rightHtml += '<span style="padding:0 4px; color:#94a3b8;">…</span>';
+    } else {
+      var isCur = (n === p);
+      rightHtml += '<button type="button" class="btn' + (isCur ? ' btn-primary' : '') + '" style="padding:3px 8px; font-size:12px;' + (isCur ? ' font-weight:600;' : ' background:#fff; border:1px solid #cbd5e1;') + '" onclick="goRulesPage(' + n + ')">' + n + '</button>';
+    }
+  });
+
+  rightHtml += '<button type="button" class="btn" style="padding:3px 10px; font-size:12px;" onclick="goRulesPage(' + (p + 1) + ')"' + (p >= totalPages ? ' disabled' : '') + '>下一页</button>';
+
+  // 前往指定页
+  rightHtml += '<div class="pg-jump">'
+    + '<span>前往</span>'
+    + '<input type="number" id="rules-jump-input" min="1" max="' + totalPages + '" value="' + p + '" onkeydown="if(event.key===\'Enter\'){event.preventDefault();doRulesJump();}">'
+    + '<span>页</span>'
+    + '<button type="button" onclick="doRulesJump()">跳转</button>'
+    + '</div>';
+
+  rightHtml += '</div>';
+
+  container.innerHTML = leftHtml + rightHtml;
+}
+
+function goRulesPage(targetPage) {
+  var totalPages = Math.max(1, Math.ceil(rulesState.filteredIds.length / rulesState.pageSize));
+  if (targetPage < 1) targetPage = 1;
+  if (targetPage > totalPages) targetPage = totalPages;
+  rulesState.page = targetPage;
+  renderRulesTable();
+}
+
+function doRulesJump() {
+  var input = document.getElementById('rules-jump-input');
+  if (!input) return;
+  var p = parseInt(input.value, 10);
+  if (isNaN(p) || p < 1) p = 1;
+  var totalPages = Math.max(1, Math.ceil(rulesState.filteredIds.length / rulesState.pageSize));
+  if (p > totalPages) p = totalPages;
+  goRulesPage(p);
+}
+
+function onMatchModeChange() {
+  var mode = document.getElementById('form-match-mode').value;
+  var patternInput = document.getElementById('form-pattern');
+  var hint = document.getElementById('hint-form-pattern');
+
+  if (mode === 'contains') {
+    patternInput.placeholder = '如: 密码, 密钥, token, 身份证, 薪资';
+    hint.textContent = '输入敏感词列表，支持使用逗号隔开多个词，命中任意一个即拦截（忽略大小写）';
+  } else if (mode === 'glob') {
+    patternInput.placeholder = '如: rm -rf /* 或 *.env* 或 git push --force*';
+    hint.textContent = '支持使用 * (代表任意字符) 和 ? (代表单个字符)，简单直观，无需写复杂正则';
+  } else if (mode === 'startswith') {
+    patternInput.placeholder = '如: git push --force 或 format ';
+    hint.textContent = '当目标内容以指定文本开头时触发拦截';
+  } else if (mode === 'endswith') {
+    patternInput.placeholder = '如: .env, .pem, .key, id_rsa';
+    hint.textContent = '当目标内容以指定扩展名或后缀结尾时触发，支持逗号分隔多个后缀';
+  } else if (mode === 'exact') {
+    patternInput.placeholder = '如: rmdir /s /q C:\\';
+    hint.textContent = '内容与该文本完全一致时触发（忽略首尾空格）';
+  } else if (mode === 'regex') {
+    patternInput.placeholder = '如: \\b(curl|wget)\\b.*pastebin';
+    hint.textContent = 'Python 标准正则表达式 (自动忽略大小写)';
+  }
+}
+
+function updateMatchTarget() {
+  var val = document.getElementById('form-when-type').value;
+  var fieldSelect = document.getElementById('form-match-field');
+  var modeSelect = document.getElementById('form-match-mode');
+
+  if (val === 'Bash') {
+    fieldSelect.value = 'bash_command';
+    modeSelect.value = 'glob';
+  } else if (val === 'Read' || val === 'Write' || val === 'Edit') {
+    fieldSelect.value = 'file_path';
+    modeSelect.value = 'endswith';
+  } else if (val === 'WebFetch') {
+    fieldSelect.value = 'url';
+    modeSelect.value = 'contains';
+  } else if (val === 'UserPromptSubmit') {
+    fieldSelect.value = 'prompt_text';
+    modeSelect.value = 'contains';
+  }
+  onMatchModeChange();
+}
+
+function openRuleModal() {
+  document.getElementById('modal-title').textContent = '新增安全策略';
+  document.getElementById('form-id').value = '';
+  document.getElementById('form-id').readOnly = false;
+  document.getElementById('form-when-type').value = 'UserPromptSubmit';
+  updateMatchTarget();
+  document.getElementById('form-severity').value = 'critical';
+  document.getElementById('form-pattern').value = '';
+  document.getElementById('form-reason').value = '';
+  document.getElementById('form-file').value = 'custom_rules.yml';
+  document.getElementById('rule-modal').style.display = 'flex';
+}
+
+function closeRuleModal() {
+  document.getElementById('rule-modal').style.display = 'none';
+}
+
+// 点击遮罩外部自动关闭弹窗
+window.addEventListener('click', function(e) {
+  var modal = document.getElementById('rule-modal');
+  if (e.target === modal) {
+    closeRuleModal();
+  }
+});
+
+function editRuleById(ruleId) {
+  var rule = RULES_MAP[ruleId];
+  if (!rule) {
+    alert('未找到规则数据: ' + ruleId);
+    return;
+  }
+  document.getElementById('modal-title').textContent = '编辑安全策略: ' + rule.id;
+  document.getElementById('form-id').value = rule.id;
+  document.getElementById('form-id').readOnly = true;
+  document.getElementById('form-severity').value = rule.severity || 'warn';
+  document.getElementById('form-reason').value = rule.reason || '';
+  document.getElementById('form-file').value = rule.file_name || 'custom_rules.yml';
+
+  var when = rule.when || {};
+  if (when.tool) {
+    if (Array.isArray(when.tool)) {
+      document.getElementById('form-when-type').value = when.tool[0];
+    } else {
+      document.getElementById('form-when-type').value = when.tool;
+    }
+  } else if (when.event) {
+    document.getElementById('form-when-type').value = when.event;
+  } else {
+    document.getElementById('form-when-type').value = 'all';
+  }
+
+  var match = rule.match || {};
+  var matchKeys = Object.keys(match);
+  if (matchKeys.length > 0) {
+    var rawKey = matchKeys[0];
+    var rawVal = match[rawKey];
+    var field = 'prompt_text';
+    var mode = 'regex';
+
+    var knownModes = ['contains', 'glob', 'startswith', 'endswith', 'exact', 'regex'];
+    for (var i = 0; i < knownModes.length; i++) {
+      var m = knownModes[i];
+      if (rawKey.endsWith('_' + m)) {
+        mode = m;
+        field = rawKey.substring(0, rawKey.length - m.length - 1);
+        break;
+      }
+    }
+
+    document.getElementById('form-match-mode').value = mode;
+    document.getElementById('form-match-field').value = field;
+    onMatchModeChange();
+
+    if (Array.isArray(rawVal)) {
+      document.getElementById('form-pattern').value = rawVal.join(', ');
+    } else {
+      document.getElementById('form-pattern').value = rawVal || '';
+    }
+  } else {
+    document.getElementById('form-match-mode').value = 'contains';
+    document.getElementById('form-match-field').value = 'prompt_text';
+    onMatchModeChange();
+    document.getElementById('form-pattern').value = '';
+  }
+
+  document.getElementById('rule-modal').style.display = 'flex';
+}
+
+function saveRuleForm(e) {
+  e.preventDefault();
+  var id = document.getElementById('form-id').value.trim();
+  var whenType = document.getElementById('form-when-type').value;
+  var severity = document.getElementById('form-severity').value;
+  var matchMode = document.getElementById('form-match-mode').value;
+  var matchField = document.getElementById('form-match-field').value;
+  var patternRaw = document.getElementById('form-pattern').value.trim();
+  var reason = document.getElementById('form-reason').value.trim();
+  var fileName = document.getElementById('form-file').value.trim() || 'custom_rules.yml';
+
+  var when = {};
+  if (whenType === 'UserPromptSubmit') {
+    when = { event: 'UserPromptSubmit' };
+  } else if (whenType !== 'all') {
+    when = { tool: whenType };
+  }
+
+  var matchKey = matchField + '_' + matchMode;
+  var matchVal;
+
+  if (matchMode === 'contains' || matchMode === 'endswith') {
+    var parts = patternRaw.split(/[,，\n]+/).map(function(s) { return s.trim(); }).filter(Boolean);
+    matchVal = parts.length > 1 ? parts : (parts[0] || patternRaw);
+  } else {
+    matchVal = patternRaw;
+  }
+
+  var match = {};
+  match[matchKey] = matchVal;
+
+  var payload = {
+    id: id,
+    when: when,
+    match: match,
+    severity: severity,
+    reason: reason,
+    file_name: fileName
+  };
+
+  var btn = document.getElementById('btn-save-rule');
+  btn.disabled = true;
+  btn.textContent = '正在保存...';
+
+  fetch('/api/rules', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+  .then(function(res) { return res.json(); })
+  .then(function(data) {
+    btn.disabled = false;
+    btn.textContent = '保存策略并立即生效';
+    if (data.ok) {
+      alert('策略保存成功，已全局秒级生效！');
+      window.location.reload();
+    } else {
+      alert('保存失败: ' + (data.error || '未知错误'));
+    }
+  })
+  .catch(function(err) {
+    btn.disabled = false;
+    btn.textContent = '保存策略并立即生效';
+    alert('请求异常: ' + err.message);
+  });
+}
+
+function deleteRule(ruleId) {
+  if (!confirm('确定要删除策略规则 ' + ruleId + ' 吗？删除后将不再拦截该操作！')) {
+    return;
+  }
+  fetch('/api/rules/' + encodeURIComponent(ruleId) + '/delete', { method: 'POST' })
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        alert('规则已成功删除！');
+        window.location.reload();
+      } else {
+        alert('删除失败: ' + (data.error || '未知错误'));
+      }
+    })
+    .catch(function(err) {
+      alert('请求异常: ' + err.message);
+    });
+}
+
+function reloadRules() {
+  fetch('/api/rules/reload', { method: 'POST' })
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        alert('规则热重载成功！当前激活规则数: ' + data.reloaded_count);
+        window.location.reload();
+      } else {
+        alert('重载失败: ' + (data.error || '未知错误'));
+      }
+    })
+    .catch(function(err) {
+      alert('请求异常: ' + err.message);
+    });
+}
+
+// ==================== AI 智能策略工坊交互逻辑 ====================
+var currentAiResult = null;
+
+function openAiRuleModal() {
+  document.getElementById('ai-rule-modal').style.display = 'flex';
+  if (!currentAiResult) {
+    document.getElementById('ai-result-panel').style.display = 'none';
+    document.getElementById('btn-ai-apply').style.display = 'none';
+    document.getElementById('btn-ai-to-manual').style.display = 'none';
+  }
+}
+
+function closeAiRuleModal() {
+  document.getElementById('ai-rule-modal').style.display = 'none';
+}
+
+// 点击遮罩外部自动关闭 AI 弹窗
+window.addEventListener('click', function(e) {
+  var modal = document.getElementById('ai-rule-modal');
+  if (e.target === modal) {
+    closeAiRuleModal();
+  }
+});
+
+function fillAiTemplate(reqText, scope, sev) {
+  document.getElementById('ai-req-input').value = reqText;
+  if (scope) {
+    document.getElementById('ai-scope-hint').value = scope;
+  }
+  if (sev) {
+    document.getElementById('ai-severity-hint').value = sev;
+  }
+}
+
+function runAiGenerateAndTest() {
+  var req = document.getElementById('ai-req-input').value.trim();
+  if (!req) {
+    alert('请输入您的安全管控需求（例如：禁止删除任何 .log 运行日志文件）');
+    return;
+  }
+  var scope = document.getElementById('ai-scope-hint').value;
+  var sev = document.getElementById('ai-severity-hint').value;
+
+  var btn = document.getElementById('btn-trigger-ai');
+  var loadingBox = document.getElementById('ai-loading-box');
+  var resultPanel = document.getElementById('ai-result-panel');
+
+  btn.disabled = true;
+  btn.style.opacity = '0.6';
+  loadingBox.style.display = 'block';
+  resultPanel.style.display = 'none';
+  document.getElementById('btn-ai-apply').style.display = 'none';
+  document.getElementById('btn-ai-to-manual').style.display = 'none';
+
+  fetch('/api/rules/ai-generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      requirement: req,
+      scope_hint: scope,
+      severity_hint: sev
+    })
+  })
+  .then(function(res) {
+    return res.json().then(function(data) {
+      return { status: res.status, data: data };
+    });
+  })
+  .then(function(wrapped) {
+    btn.disabled = false;
+    btn.style.opacity = '1';
+    loadingBox.style.display = 'none';
+
+    var data = wrapped.data;
+    if (!data.ok) {
+      alert('AI 策略生成失败: ' + (data.error || '大模型服务异常'));
+      return;
+    }
+
+    currentAiResult = data;
+    renderAiResults(data);
+  })
+  .catch(function(err) {
+    btn.disabled = false;
+    btn.style.opacity = '1';
+    loadingBox.style.display = 'none';
+    alert('请求异常: ' + err.message);
+  });
+}
+
+function renderAiResults(data) {
+  var rule = data.rule || {};
+  var report = data.test_report || {};
+  var panel = document.getElementById('ai-result-panel');
+  panel.style.display = 'block';
+
+  // 1. Banner
+  var banner = document.getElementById('ai-test-banner');
+  var title = document.getElementById('ai-test-title');
+  var subtitle = document.getElementById('ai-test-subtitle');
+  var metrics = document.getElementById('ai-test-metrics');
+
+  var allPassed = report.all_passed;
+  if (allPassed) {
+    banner.style.background = 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)';
+    banner.style.border = '1px solid #6ee7b7';
+    banner.style.color = '#065f46';
+    title.innerHTML = '🎉 自动化沙箱自测 100% 全部通过！';
+    subtitle.textContent = report.summary || '正向高危攻击样本全部精准拦截，负向合法业务样本全部安全放行！';
+  } else {
+    banner.style.background = 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)';
+    banner.style.border = '1px solid #fcd34d';
+    banner.style.color = '#92400e';
+    title.innerHTML = '⚠️ 自动化沙箱自测存在未通过项';
+    subtitle.textContent = report.summary || report.error || '部分测试用例未达到预期，请检查或微调规则';
+  }
+
+  var genTime = data.generation_time_ms ? (data.generation_time_ms / 1000).toFixed(1) + 's' : '-';
+  metrics.innerHTML = '<span style="background:rgba(255,255,255,0.85); padding:4px 10px; border-radius:6px; font-size:12px; font-weight:600; border:1px solid rgba(0,0,0,0.06);">' +
+    '⏱️ 耗时 ' + genTime + '</span>';
+
+  // 2. 设计思路
+  var expBox = document.getElementById('ai-explanation-box');
+  expBox.innerHTML = '<strong>💡 AI 规则设计与正则原理：</strong>' + (data.explanation || '本策略由大模型根据企业安全规范自动推导，结合语法边界与常见绕过手法设计严密拦截规则。');
+
+  // 3. 正向测试用例渲染
+  var posList = document.getElementById('ai-positive-cases-list');
+  var posBadge = document.getElementById('ai-pos-stat-badge');
+  posBadge.textContent = '拦截: ' + (report.positive_passed_count || 0) + ' / ' + (report.positive_total_count || 0);
+  posList.innerHTML = '';
+  (report.positive_results || []).forEach(function(item) {
+    var d = document.createElement('div');
+    d.style.padding = '6px 8px';
+    d.style.borderRadius = '4px';
+    d.style.fontSize = '12px';
+    d.style.fontFamily = 'Consolas, monospace';
+    d.style.display = 'flex';
+    d.style.alignItems = 'center';
+    d.style.gap = '6px';
+    if (item.passed) {
+      d.style.background = '#fef2f2';
+      d.style.border = '1px solid #fecaca';
+      d.style.color = '#991b1b';
+      d.innerHTML = '<span style="font-weight:700; color:#dc2626;">[已阻断]</span> <span style="word-break:break-all;">' + escapeHtml(item.input) + '</span>';
+    } else {
+      d.style.background = '#fef2f2';
+      d.style.border = '1px dashed #ef4444';
+      d.style.color = '#b91c1c';
+      d.innerHTML = '<span style="font-weight:700; color:#dc2626;">[未拦截 ✘]</span> <span style="word-break:break-all;">' + escapeHtml(item.input) + '</span>';
+    }
+    posList.appendChild(d);
+  });
+
+  // 4. 负向测试用例渲染
+  var negList = document.getElementById('ai-negative-cases-list');
+  var negBadge = document.getElementById('ai-neg-stat-badge');
+  negBadge.textContent = '放行: ' + (report.negative_passed_count || 0) + ' / ' + (report.negative_total_count || 0);
+  negList.innerHTML = '';
+  (report.negative_results || []).forEach(function(item) {
+    var d = document.createElement('div');
+    d.style.padding = '6px 8px';
+    d.style.borderRadius = '4px';
+    d.style.fontSize = '12px';
+    d.style.fontFamily = 'Consolas, monospace';
+    d.style.display = 'flex';
+    d.style.alignItems = 'center';
+    d.style.gap = '6px';
+    if (item.passed) {
+      d.style.background = '#f0fdf4';
+      d.style.border = '1px solid #bbf7d0';
+      d.style.color = '#15803d';
+      d.innerHTML = '<span style="font-weight:700; color:#16a34a;">[已放行]</span> <span style="word-break:break-all;">' + escapeHtml(item.input) + '</span>';
+    } else {
+      d.style.background = '#fffbeb';
+      d.style.border = '1px dashed #f59e0b';
+      d.style.color = '#b45309';
+      d.innerHTML = '<span style="font-weight:700; color:#d97706;">[误报拦截 ✘]</span> <span style="word-break:break-all;">' + escapeHtml(item.input) + '</span>';
+    }
+    negList.appendChild(d);
+  });
+
+  // 5. 填入微调表单
+  document.getElementById('ai-rule-id').value = rule.id || '';
+  document.getElementById('ai-rule-severity').value = rule.severity || 'critical';
+  document.getElementById('ai-rule-field').value = rule.match_field || 'bash_command';
+  document.getElementById('ai-rule-mode').value = rule.match_mode || 'regex';
+  document.getElementById('ai-rule-pattern').value = rule.pattern || '';
+  document.getElementById('ai-rule-reason').value = rule.reason || '';
+
+  // 6. 展示启用按钮与转为手动按钮
+  document.getElementById('btn-ai-apply').style.display = 'inline-block';
+  document.getElementById('btn-ai-to-manual').style.display = 'inline-block';
+
+  // 滚动到底部使结果可见
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function reRunSandboxTest() {
+  if (!currentAiResult) return;
+  var field = document.getElementById('ai-rule-field').value;
+  var mode = document.getElementById('ai-rule-mode').value;
+  var pattern = document.getElementById('ai-rule-pattern').value;
+  var posCases = currentAiResult.positive_cases || [];
+  var negCases = currentAiResult.negative_cases || [];
+
+  fetch('/api/rules/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      match_field: field,
+      match_mode: mode,
+      pattern: pattern,
+      positive_cases: posCases,
+      negative_cases: negCases
+    })
+  })
+  .then(function(res) { return res.json(); })
+  .then(function(resData) {
+    if (resData.ok && resData.test_report) {
+      currentAiResult.test_report = resData.test_report;
+      currentAiResult.rule.match_field = field;
+      currentAiResult.rule.match_mode = mode;
+      currentAiResult.rule.pattern = pattern;
+      renderAiResults(currentAiResult);
+    } else {
+      alert('沙箱测试失败: ' + (resData.error || '未知错误'));
+    }
+  })
+  .catch(function(err) {
+    alert('自测请求异常: ' + err.message);
+  });
+}
+
+function testCustomSingleCase() {
+  var text = document.getElementById('ai-custom-test-input').value.trim();
+  if (!text) {
+    alert('请输入待测试的命令或文本');
+    return;
+  }
+  var field = document.getElementById('ai-rule-field').value;
+  var mode = document.getElementById('ai-rule-mode').value;
+  var pattern = document.getElementById('ai-rule-pattern').value;
+  var resBox = document.getElementById('ai-custom-test-result');
+
+  fetch('/api/rules/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      match_field: field,
+      match_mode: mode,
+      pattern: pattern,
+      positive_cases: [text],
+      negative_cases: []
+    })
+  })
+  .then(function(res) { return res.json(); })
+  .then(function(resData) {
+    resBox.style.display = 'block';
+    if (resData.ok && resData.test_report && resData.test_report.positive_results && resData.test_report.positive_results[0]) {
+      var r = resData.test_report.positive_results[0];
+      if (r.matched) {
+        resBox.style.color = '#b91c1c';
+        resBox.style.background = '#fee2e2';
+        resBox.style.padding = '6px 10px';
+        resBox.style.borderRadius = '4px';
+        resBox.style.border = '1px solid #fecaca';
+        resBox.innerHTML = '🚨 <strong>触发策略拦截！</strong> 匹配详情: <code>' + escapeHtml(r.match_text || '命中规则') + '</code>';
+      } else {
+        resBox.style.color = '#15803d';
+        resBox.style.background = '#dcfce7';
+        resBox.style.padding = '6px 10px';
+        resBox.style.borderRadius = '4px';
+        resBox.style.border = '1px solid #bbf7d0';
+        resBox.innerHTML = '✅ <strong>正常放行！</strong> 未命中当前规则（无误报阻断）。';
+      }
+    } else {
+      resBox.innerHTML = '测试异常: ' + (resData.test_report ? resData.test_report.error : '未知错误');
+    }
+  })
+  .catch(function(err) {
+    alert('测试异常: ' + err.message);
+  });
+}
+
+function applyAndEnableAiRule() {
+  var id = document.getElementById('ai-rule-id').value.trim();
+  if (!id) {
+    alert('规则唯一标识 (ID) 不能为空');
+    return;
+  }
+  var severity = document.getElementById('ai-rule-severity').value;
+  var field = document.getElementById('ai-rule-field').value;
+  var mode = document.getElementById('ai-rule-mode').value;
+  var pattern = document.getElementById('ai-rule-pattern').value.trim();
+  var reason = document.getElementById('ai-rule-reason').value.trim();
+  if (!pattern) {
+    alert('匹配表达式 (Pattern) 不能为空');
+    return;
+  }
+  if (!reason) {
+    alert('阻断理由 (Reason) 不能为空');
+    return;
+  }
+
+  // 构造 when
+  var when = (currentAiResult && currentAiResult.rule && currentAiResult.rule.when) ? currentAiResult.rule.when : {};
+  if (!when || Object.keys(when).length === 0) {
+    if (field === 'bash_command') when = { tool: 'Bash' };
+    else if (field === 'prompt_text') when = { event: 'UserPromptSubmit' };
+    else if (field === 'file_path') when = { tool: ['Read', 'Edit', 'Write'] };
+    else if (field === 'url') when = { tool: 'WebFetch' };
+  }
+
+  var matchKey = field + '_' + mode;
+  var match = {};
+  match[matchKey] = pattern;
+
+  var payload = {
+    id: id,
+    when: when,
+    match: match,
+    severity: severity,
+    reason: reason,
+    file_name: 'custom_rules.yml'
+  };
+
+  var btn = document.getElementById('btn-ai-apply');
+  btn.disabled = true;
+  btn.textContent = '正在启用规则并热重载...';
+
+  fetch('/api/rules', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+  .then(function(res) { return res.json(); })
+  .then(function(data) {
+    btn.disabled = false;
+    btn.textContent = '🚀 测试通过，立即启用规则';
+    if (data.ok) {
+      alert('🎉 恭喜！安全策略 [' + id + '] 已成功保存并立即启用生效！\n所有员工终端的 Claude Code 将实时受此策略管控。');
+      closeAiRuleModal();
+      window.location.reload();
+    } else {
+      alert('启用失败: ' + (data.error || '未知错误'));
+    }
+  })
+  .catch(function(err) {
+    btn.disabled = false;
+    btn.textContent = '🚀 测试通过，立即启用规则';
+    alert('保存异常: ' + err.message);
+  });
+}
+
+function openManualModalWithAiData() {
+  var id = document.getElementById('ai-rule-id').value.trim();
+  var severity = document.getElementById('ai-rule-severity').value;
+  var field = document.getElementById('ai-rule-field').value;
+  var mode = document.getElementById('ai-rule-mode').value;
+  var pattern = document.getElementById('ai-rule-pattern').value.trim();
+  var reason = document.getElementById('ai-rule-reason').value.trim();
+
+  closeAiRuleModal();
+  openRuleModal();
+
+  document.getElementById('form-id').value = id;
+  document.getElementById('form-severity').value = severity;
+  document.getElementById('form-match-field').value = field;
+  document.getElementById('form-match-mode').value = mode;
+  document.getElementById('form-pattern').value = pattern;
+  document.getElementById('form-reason').value = reason;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  filterRules();
+});
+</script>
+{% endblock %}

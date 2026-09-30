@@ -1,0 +1,38 @@
+# claude_audit server config - Docker version
+# Paths are Linux paths inside the container.
+# The /data volume is mounted from the host (see docker-compose.yml).
+
+# Ingest-only mode: server receives events via HTTP POST /ingest from
+# claude_audit_client.exe running on employee machines. No local file tailing.
+local_collector: false
+
+# These are unused when local_collector=false but must be present.
+log_sources: []
+watch_dir: /data/logs
+
+database: /data/audit.db
+
+rules_dir: /app/claude_audit/detector/rules
+
+web:
+  host: 0.0.0.0
+  port: 8787
+
+ingest:
+  enabled: true
+  # Empty = no auth (LAN self-use). Fill with a 32+ char random string in prod.
+  # Client-side must send X-Ingest-Token: <same-value>.
+  token: "your-audit-ingest-token-2026"
+
+# 插件 zip 文件存储目录（客户端自动更新用）
+plugins_dir: /data/plugins
+
+# GLM 监控数据 db (由 glm_monitor/monitor.py 采集器写入, 平台只读)
+# 容器内路径, 对应 docker-compose 挂载的 /data 卷
+glm_monitor_db: /data/glm_monitor_data.db
+
+# LiteLLM 网关（插件状态页拉取用户 IP + 最新调用时间用）
+litellm:
+  host: "http://192.168.3.124:4000"
+  api_key: "sk-litellm-demo-key"
+  offline_threshold_hours: 3

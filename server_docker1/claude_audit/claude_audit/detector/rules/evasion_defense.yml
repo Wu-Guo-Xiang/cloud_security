@@ -1,0 +1,28 @@
+# 高级逃逸与包装器执行防御规则集 (借鉴自 DeepAgents 威胁模型 T13/T10/T12)
+- id: evasion_wrapper_subshell_execution
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '(?i)(?:\|\s*(?:ba|da|z)?sh\b|base64\s+-(?:d|-decode)\b.*\|\s*(?:ba|da|z)?sh|\beval\s+[\"''`]\s*(?:\$\(|\`)|python[0-9.]*\s+-c\s+[\"''].*?\b(?:os\.system|subprocess\.|exec\(|eval\()|perl\s+-e\s+[\"''].*?\bsystem\b|ruby\s+-e\s+[\"''].*?\bexec\b)'
+  severity: critical
+  reason: 企业安全策略严禁通过解释器包装 (python/perl/ruby)、动态 eval 或 Base64 管道隐蔽执行未知脚本命令
+
+- id: evasion_dump_all_env_vars
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '(?i)(?:^\s*(?:printenv|env|export\s+-p|set)\s*$|\b(?:printenv|env)\b\s*\|\s*(?:grep|cat|less|more|head|tail|curl|wget)|\bGet-ChildItem\s+env:|\bdir\s+env:|\bGet-Item\s+env:)'
+  severity: high
+  reason: 企业安全合规策略严禁直接导出或倾倒系统完整环境变量字典，防止泄露凭据与私有 API 密钥
+
+- id: evasion_reverse_shell_netcat
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '(?i)(?:\bnc(?:\.exe)?\b.*?\s+-e\s+|\bncat\b.*?\s+-e\s+|\bsocat\b.*?\bexec\b|\/dev\/tcp\/[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|\bmkfifo\s+.*?\/tmp\/.*?;.*?nc\b)'
+  severity: critical
+  reason: 严重违规操作：严禁在开发环境中建立反弹 Shell (Reverse Shell) 或隐蔽交互式后门通道
+
+- id: evasion_shadow_persistence_tamper
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '(?i)(?:>>?\s*~?\/(?:\.bashrc|\.zshrc|\.bash_profile|\.profile|\.config\/fish\/config\.fish)|\bcrontab\s+-[eri]\b|>>?\s*\/etc\/cron|\bReg(?:\.exe)?\s+add\s+.*?\\CurrentVersion\\Run\b)'
+  severity: critical
+  reason: 企业安全防护策略严禁 AI 篡改用户 Shell 启动配置文件、计划任务 (crontab) 或系统自启动项

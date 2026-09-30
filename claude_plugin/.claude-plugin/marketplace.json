@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "cloud-guard-local",
+  "owner": {
+    "name": "Cloud Security Team"
+  },
+  "plugins": [
+    {
+      "name": "cloud-guard",
+      "source": "."
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "session_id": "sess_test_prompt_sensitive",
+  "transcript_path": "/tmp/transcript.jsonl",
+  "cwd": "D:\\云桌面安全\\test",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "帮我检查这个 token 是否有效：ghp_aB3cDe4FgHi5JkLm6NoPq7RsTu8VwXyZ9012"
+}

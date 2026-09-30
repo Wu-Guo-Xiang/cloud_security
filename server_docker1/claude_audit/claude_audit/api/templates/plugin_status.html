@@ -1,0 +1,1028 @@
+{% extends "base.html" %}
+{% block title %}插件状态 · Cloud Security AI 日志监控平台{% endblock %}
+{% block topbar %}插件状态{% endblock %}
+
+{% block body %}
+<div class="ps-header">
+  <div class="ps-meta" id="ps-generated">加载中…</div>
+  <div class="ps-actions">
+    <span class="ps-filter-label">状态</span>
+    <select id="ps-status-filter">
+      <option value="">全部</option>
+      <option value="online">在线</option>
+      <option value="offline">离线</option>
+      <option value="not_installed">未安装</option>
+      <option value="unused">未使用</option>
+      <option value="ip_blocked">IP异常</option>
+    </select>
+    <input id="ps-search" type="text" placeholder="搜索姓名 / 拼音">
+    <button class="btn btn-primary" id="ps-refresh" type="button">刷新数据</button>
+    <button class="btn btn-sync" id="ps-sync-org" type="button">同步组织架构</button>
+    <button class="btn btn-whitelist" id="ps-btn-namemap" type="button">电脑编号映射</button>
+    <button class="btn btn-whitelist" id="ps-btn-llalias" type="button">键名映射</button>
+    <button class="btn btn-whitelist" id="ps-btn-offline-keys" type="button">离线Key管理</button>
+    <button class="btn btn-whitelist" id="ps-btn-whitelist" type="button">IP白名单</button>
+  </div>
+</div>
+
+<div class="ps-summary" id="ps-summary"></div>
+
+<div class="ps-layout">
+  <aside class="ps-tree-card">
+    <div class="ps-tree-title">组织架构</div>
+    <div class="ps-tree" id="ps-tree">
+      <div class="empty">加载中…</div>
+    </div>
+  </aside>
+
+  <section class="ps-table-card">
+    <div class="ps-table-title" id="ps-table-title">员工插件状态</div>
+    <div class="ps-table-wrap">
+      <table class="ps-table">
+        <thead>
+          <tr>
+            <th>姓名</th>
+            <th>部门</th>
+            <th>状态</th>
+            <th>LiteLLM 最新时间</th>
+            <th>IP</th>
+            <th>24h调用</th>
+            <th>插件最新上报</th>
+          </tr>
+        </thead>
+        <tbody id="ps-tbody">
+          <tr><td colspan="7" class="empty">加载中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <nav class="ps-pager" id="ps-pager"></nav>
+  </section>
+</div>
+
+<div class="ps-unmatched-card" id="ps-unmatched-card" style="display:none;">
+  <div class="ps-table-title">未匹配到员工的 LiteLLM Key</div>
+  <div class="ps-table-wrap">
+    <table class="ps-table">
+      <thead>
+        <tr><th>Key 别名</th><th>最近时间</th><th>IP</th><th>24h调用</th><th>类型</th></tr>
+      </thead>
+      <tbody id="ps-unmatched-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function() {
+  const state = {
+    data: null,
+    deptPath: '',      // 选中的部门路径(空=全部)
+    status: '',        // 状态筛选
+    search: '',
+    page: 1,           // 当前页码
+    pageSize: 50,      // 每页条数
+  };
+
+  const STATUS_LABEL = {
+    online: { text: '在线', cls: 'badge-online' },
+    offline: { text: '离线', cls: 'badge-offline' },
+    not_installed: { text: '未安装', cls: 'badge-notinstalled' },
+    unused: { text: '未使用', cls: 'badge-unused' },
+  };
+
+  function normName(s) { return (s || '').replace(/\s+/g, ''); }
+
+  async function loadData(force) {
+    const tbody = document.getElementById('ps-tbody');
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">加载中…</td></tr>';
+    document.getElementById('ps-generated').textContent = '加载中…';
+    try {
+      const resp = await fetch('/api/plugin-status' + (force ? '?refresh=1' : ''));
+      const data = await resp.json();
+      state.data = data;
+      renderAll();
+    } catch (e) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">加载失败: ' + e.message + '</td></tr>';
+      document.getElementById('ps-generated').textContent = '加载失败';
+    }
+  }
+
+  function buildTree(rows) {
+    // dept_path 用 '/' 分级, 构建嵌套树
+    const root = { name: '全部', path: '', children: {}, count: 0, people: 0 };
+    const deptSet = new Map(); // path -> node
+    function ensure(path) {
+      if (deptSet.has(path)) return deptSet.get(path);
+      const parts = path.split('/');
+      const name = parts[parts.length - 1] || path;
+      const node = { name, path, children: {}, count: 0, people: 0 };
+      deptSet.set(path, node);
+      const parentPath = parts.slice(0, -1).join('/');
+      const parent = parentPath ? ensure(parentPath) : root;
+      parent.children[path] = node;
+      return node;
+    }
+    rows.forEach(r => {
+      if (!r.dept_path) return;
+      const node = ensure(r.dept_path);
+      node.people += 1;
+      // 向上累加 count
+      let p = r.dept_path;
+      while (true) {
+        const n = deptSet.get(p) || root;
+        n.count += 1;
+        const idx = p.lastIndexOf('/');
+        if (idx < 0) break;
+        p = p.slice(0, idx);
+      }
+      root.count += 0; // root.count = total people below
+    });
+    root.count = rows.length;
+    return root;
+  }
+
+  function renderTree(node, container, depth) {
+    const hasChildren = Object.keys(node.children || {}).length > 0;
+    const isActive = state.deptPath === node.path;
+    const row = document.createElement('div');
+    row.className = 'ps-tree-node' + (isActive ? ' active' : '');
+    row.style.paddingLeft = (12 + depth * 14) + 'px';
+    row.dataset.path = node.path;
+
+    const toggle = document.createElement('span');
+    toggle.className = 'ps-tree-toggle';
+    if (hasChildren) {
+      const expanded = state.deptPath === node.path || state.deptPath.startsWith(node.path ? node.path + '/' : '___');
+      toggle.textContent = expanded ? '▾' : '▸';
+      toggle.onclick = function(e) {
+        e.stopPropagation();
+        const kids = row.nextElementSibling;
+        if (kids && kids.classList.contains('ps-tree-kids')) {
+          const show = kids.style.display === 'none';
+          kids.style.display = show ? '' : 'none';
+          toggle.textContent = show ? '▾' : '▸';
+        }
+      };
+    } else {
+      toggle.textContent = ' ';
+      toggle.classList.add('leaf');
+    }
+    row.appendChild(toggle);
+
+    const label = document.createElement('span');
+    label.className = 'ps-tree-label';
+    const countSpan = document.createElement('span');
+    countSpan.className = 'ps-tree-count';
+    countSpan.textContent = '(' + node.count + ')';
+    label.textContent = node.name;
+    row.appendChild(label);
+    row.appendChild(countSpan);
+
+    row.onclick = function() {
+      state.deptPath = node.path;
+      state.page = 1;
+      updateTreeActive();
+      renderTable();
+    };
+    container.appendChild(row);
+
+    if (hasChildren) {
+      const kids = document.createElement('div');
+      kids.className = 'ps-tree-kids';
+      const expanded = state.deptPath === node.path || (node.path && state.deptPath.startsWith(node.path + '/'));
+      kids.style.display = (depth === 0 || expanded) ? '' : 'none';
+      // 排序: 子节点按名字
+      Object.values(node.children).sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'))
+        .forEach(c => renderTree(c, kids, depth + 1));
+      container.appendChild(kids);
+    }
+  }
+
+  function updateTreeActive() {
+    document.querySelectorAll('.ps-tree-node').forEach(el => {
+      el.classList.toggle('active', el.dataset.path === state.deptPath);
+    });
+    // 更新标题
+    const node = findNode(currentTree, state.deptPath);
+    document.getElementById('ps-table-title').textContent =
+      node ? ('员工插件状态 · ' + node.name) : '员工插件状态';
+  }
+
+  let currentTree = null;
+  function findNode(node, path) {
+    if (!node) return null;
+    if (node.path === path) return node;
+    for (const c of Object.values(node.children || {})) {
+      const r = findNode(c, path);
+      if (r) return r;
+    }
+    return null;
+  }
+
+  function matchDept(row, path) {
+    if (!path) return true;
+    return row.dept_path === path || row.dept_path.startsWith(path + '/');
+  }
+
+  function auditName(row) {
+    // 优先取邮箱前缀, 去掉数字尾
+    const email = (row.email || '').split('@')[0].trim().toLowerCase();
+    if (email) {
+      return { primary: email, stripped: email.replace(/\d+$/, '') };
+    }
+    return { primary: '', stripped: '' };
+  }
+
+  function matchSearch(row, q) {
+    if (!q) return true;
+    q = q.toLowerCase();
+    if ((row.name || '').toLowerCase().includes(q)) return true;
+    const email = (row.email || '').toLowerCase();
+    if (email.includes(q)) return true;
+    if ((row.audit_user || '').toLowerCase().includes(q)) return true;
+    return false;
+  }
+
+  function renderSummary() {
+    if (!state.data) return;
+    const s = state.data.summary || {};
+    const el = document.getElementById('ps-summary');
+    const gen = document.getElementById('ps-generated');
+    gen.textContent = '数据时间: ' + (state.data.generated_at || '') +
+      (state.data.litellm_error ? '  ·  网关错误: ' + state.data.litellm_error : '');
+    el.innerHTML = '';
+    const items = [
+      { label: '总人数', value: s.total || 0, cls: '' },
+      { label: '在线', value: s.online || 0, cls: 'c-online' },
+      { label: '离线', value: s.offline || 0, cls: 'c-offline' },
+      { label: '未安装', value: s.not_installed || 0, cls: 'c-notinstalled' },
+      { label: '未使用', value: s.unused || 0, cls: 'c-unused' },
+      { label: 'IP异常', value: s.ip_blocked || 0, cls: 'c-ipblocked' },
+    ];
+    items.forEach(it => {
+      const d = document.createElement('div');
+      d.className = 'ps-stat ' + it.cls;
+      d.innerHTML = '<div class="ps-stat-value">' + it.value + '</div>' +
+                    '<div class="ps-stat-label">' + it.label + '</div>';
+      el.appendChild(d);
+    });
+
+    // unmatched
+    const um = state.data.unmatched || [];
+    const card = document.getElementById('ps-unmatched-card');
+    const tbody = document.getElementById('ps-unmatched-tbody');
+    if (um.length > 0) {
+      card.style.display = '';
+      tbody.innerHTML = um.map(r =>
+        '<tr>' +
+        '<td>' + escapeHtml(r.alias) + '</td>' +
+        '<td>' + (r.last || '') + '</td>' +
+        '<td>' + escapeHtml(r.ip || '') + '</td>' +
+        '<td>' + (r.count_24h || 0) + '</td>' +
+        '<td><span class="badge badge-' + (r.hint === 'service' ? 'unused' : 'notinstalled') + '">' +
+          (r.hint === 'service' ? '服务/测试' : '未知') + '</span></td>' +
+        '</tr>'
+      ).join('');
+    } else {
+      card.style.display = 'none';
+    }
+  }
+
+  function renderTable() {
+    if (!state.data) return;
+    const tbody = document.getElementById('ps-tbody');
+    const pager = document.getElementById('ps-pager');
+    const filtered = (state.data.rows || []).filter(r =>
+      matchDept(r, state.deptPath) &&
+      (!state.status || r.status === state.status || (state.status === 'ip_blocked' && r.ip_allowed === false)) &&
+      matchSearch(r, state.search)
+    );
+    if (filtered.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">无数据</td></tr>';
+      pager.innerHTML = '';
+      return;
+    }
+    const total = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(total / state.pageSize));
+    // 筛选条件变化时重置到第1页
+    if (state.page > totalPages) state.page = 1;
+    const start = (state.page - 1) * state.pageSize;
+    const pageRows = filtered.slice(start, start + state.pageSize);
+
+    tbody.innerHTML = pageRows.map(r => {
+      const st = STATUS_LABEL[r.status] || { text: r.status, cls: '' };
+      return '<tr>' +
+        '<td>' + escapeHtml(r.name) + '</td>' +
+        '<td title="' + escapeHtml(r.dept_path) + '">' + escapeHtml(r.dept_name || r.dept_path.split('/').pop() || '') + '</td>' +
+        '<td><span class="badge ' + st.cls + '">' + st.text + '</span></td>' +
+        '<td>' + (r.litellm_last || '—') + '</td>' +
+        '<td>' + (r.litellm_ip ? (r.ip_allowed === false ? '<span class="badge badge-ipblocked">' + escapeHtml(r.litellm_ip) + ' ⚠️</span>' : escapeHtml(r.litellm_ip)) : '—') + '</td>' +
+        '<td>' + (r.litellm_count_24h || '—') + '</td>' +
+        '<td>' + (r.audit_last || '—') + (r.audit_user ? ' <span class="ps-audit-user">(' + escapeHtml(r.audit_user) + ')</span>' : '') + '</td>' +
+      '</tr>';
+    }).join('');
+
+    // 分页控件
+    renderPager(pager, total, totalPages);
+  }
+
+  function renderPager(container, total, totalPages) {
+    if (totalPages <= 1 && total <= state.pageSize) { container.innerHTML = ''; return; }
+    const p = state.page;
+    let html = '<span class="ps-pager-info">共 ' + total + ' 人，第 ' + p + '/' + totalPages + ' 页</span>';
+
+    // 每页条数选择
+    html += '<select class="ps-page-size-select" id="ps-page-size">';
+    [20, 50, 100, 200].forEach(n => {
+      html += '<option value="' + n + '"' + (n === state.pageSize ? ' selected' : '') + '>' + n + '条/页</option>';
+    });
+    html += '</select>';
+
+    // 上一页
+    html += '<button class="btn btn-page" data-page="prev"' + (p <= 1 ? ' disabled' : '') + '>上一页</button>';
+
+    // 页码按钮（最多显示7个）
+    let pages = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      pages.push(1);
+      let lo = Math.max(2, p - 2), hi = Math.min(totalPages - 1, p + 2);
+      if (lo > 2) pages.push('...');
+      for (let i = lo; i <= hi; i++) pages.push(i);
+      if (hi < totalPages - 1) pages.push('...');
+      pages.push(totalPages);
+    }
+    pages.forEach(n => {
+      if (n === '...') {
+        html += '<span class="ps-pager-ellipsis">…</span>';
+      } else {
+        html += '<button class="btn btn-page' + (n === p ? ' active' : '') + '" data-page="' + n + '">' + n + '</button>';
+      }
+    });
+
+    // 下一页
+    html += '<button class="btn btn-page" data-page="next"' + (p >= totalPages ? ' disabled' : '') + '>下一页</button>';
+
+    // 前往指定页
+    html += '<div style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;">'
+      + '<span style="color:#64748b;font-size:12px">前往</span>'
+      + '<input type="number" id="ps-jump-input" min="1" max="' + totalPages + '" value="' + p + '" '
+      + 'style="width:46px;height:26px;text-align:center;border:1px solid #cbd5e1;border-radius:4px;font-size:12px;padding:0 2px" '
+      + 'onkeydown="if(event.key===\'Enter\'){event.preventDefault();doPsJump(' + totalPages + ');}">'
+      + '<span style="color:#64748b;font-size:12px">页</span>'
+      + '<button class="btn btn-page" type="button" id="ps-jump-btn" style="padding:0 8px;height:26px;font-size:12px">跳转</button>'
+      + '</div>';
+
+    container.innerHTML = html;
+    // 绑定页码点击
+    container.querySelectorAll('button[data-page]').forEach(btn => {
+      btn.addEventListener('click', function() {
+        const v = this.dataset.page;
+        if (v === 'prev') state.page = Math.max(1, state.page - 1);
+        else if (v === 'next') state.page = Math.min(totalPages, state.page + 1);
+        else state.page = parseInt(v) || 1;
+        renderTable();
+        document.querySelector('.ps-table-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+    // 绑定跳转按钮
+    const jumpBtn = container.querySelector('#ps-jump-btn');
+    if (jumpBtn) {
+      jumpBtn.addEventListener('click', function() {
+        doPsJump(totalPages);
+      });
+    }
+    // 绑定每页条数切换
+    const sizeSelect = container.querySelector('#ps-page-size');
+    if (sizeSelect) {
+      sizeSelect.addEventListener('change', function() {
+        state.pageSize = parseInt(this.value) || 50;
+        state.page = 1;
+        renderTable();
+      });
+    }
+  }
+
+  function doPsJump(totalPages) {
+    const input = document.getElementById('ps-jump-input');
+    if (!input) return;
+    let val = parseInt(input.value, 10);
+    if (isNaN(val) || val < 1) val = 1;
+    if (totalPages && val > totalPages) val = totalPages;
+    state.page = val;
+    renderTable();
+    document.querySelector('.ps-table-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function escapeHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, function(c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function renderAll() {
+    if (!state.data) return;
+    renderSummary();
+    // tree
+    currentTree = buildTree(state.data.rows || []);
+    const treeEl = document.getElementById('ps-tree');
+    treeEl.innerHTML = '';
+    renderTree(currentTree, treeEl, 0);
+    renderTable();
+  }
+
+  document.getElementById('ps-refresh').addEventListener('click', function() {
+    this.disabled = true; this.textContent = '刷新中…';
+    loadData(true).finally(() => { this.disabled = false; this.textContent = '刷新数据'; });
+  });
+  // ── 同步组织架构管理（跨页面持久化计时与恢复） ──
+  var syncTimer = null;
+
+  function resumeSyncPolling(taskId, initialElapsed) {
+    var btn = document.getElementById('ps-sync-org');
+    if (!btn) return;
+    btn.disabled = true;
+    var startTs = Date.now() - (Math.max(0, initialElapsed || 0) * 1000);
+
+    if (syncTimer) clearInterval(syncTimer);
+    function updateBtn() {
+      var sec = Math.floor((Date.now() - startTs) / 1000);
+      btn.textContent = '同步中…已用时 ' + sec + ' 秒';
+    }
+    updateBtn();
+    syncTimer = setInterval(updateBtn, 1000);
+
+    function poll() {
+      fetch('/api/sync-org/status?task_id=' + encodeURIComponent(taskId))
+        .then(r => r.json())
+        .then(d => {
+          if (d.status === 'running') {
+            setTimeout(poll, 2500);
+          } else if (d.status === 'done') {
+            if (syncTimer) { clearInterval(syncTimer); syncTimer = null; }
+            var finalSec = d.elapsed_seconds || Math.floor((Date.now() - startTs) / 1000);
+            btn.disabled = false;
+            btn.textContent = '同步组织架构';
+            alert('组织架构同步成功！(总耗时 ' + finalSec + ' 秒)');
+            loadData(true);
+          } else {
+            if (syncTimer) { clearInterval(syncTimer); syncTimer = null; }
+            btn.disabled = false;
+            btn.textContent = '同步组织架构';
+            alert('组织架构同步失败: ' + (d.error || '未知错误'));
+          }
+        })
+        .catch(function() {
+          setTimeout(poll, 3000);
+        });
+    }
+    poll();
+  }
+
+  function checkSyncStatus() {
+    fetch('/api/sync-org/status')
+      .then(r => r.json())
+      .then(d => {
+        if (d && d.status === 'running') {
+          resumeSyncPolling(d.task_id, d.elapsed_seconds || 0);
+        }
+      })
+      .catch(function() {});
+  }
+
+  document.getElementById('ps-sync-org').addEventListener('click', function() {
+    if (!confirm('确认从飞书同步最新组织架构？\n需递归拉取全部部门与员工(约600+人), 通常需 2-5 分钟, 期间可离开本页面, 完成后自动刷新。')) return;
+    var btn = this;
+    btn.disabled = true;
+    btn.textContent = '正在启动同步…';
+
+    fetch('/api/sync-org', {method: 'POST'})
+      .then(r => r.json())
+      .then(d => {
+        if (d.task_id) {
+          resumeSyncPolling(d.task_id, d.elapsed_seconds || 0);
+        } else {
+          alert('启动同步失败: ' + (d.error || '未知错误'));
+          btn.disabled = false;
+          btn.textContent = '同步组织架构';
+        }
+      })
+      .catch(function() {
+        alert('请求失败, 请稍后重试');
+        btn.disabled = false;
+        btn.textContent = '同步组织架构';
+      });
+  });
+  document.getElementById('ps-status-filter').addEventListener('change', function(e) {
+    state.status = e.target.value;
+    state.page = 1;
+    renderTable();
+  });
+  document.getElementById('ps-search').addEventListener('input', function(e) {
+    state.search = e.target.value.trim();
+    state.page = 1;
+    renderTable();
+  });
+
+  loadData(false);
+  checkSyncStatus();
+})();
+</script>
+
+<!-- IP 白名单模态框 -->
+<div class="ps-modal-overlay" id="ps-modal-overlay" style="display:none;">
+  <div class="ps-modal">
+    <div class="ps-modal-header">
+      <span>IP 白名单管理</span>
+      <button class="ps-modal-close" id="ps-modal-close">&times;</button>
+    </div>
+    <div class="ps-modal-body">
+      <p class="ps-modal-hint">不在白名单内的 IP 会在插件状态页标记为异常。支持单个 IP（如 172.16.1.100）和网段（如 172.16.0.0/16）。白名单为空时不限制。</p>
+      <table class="ps-table" id="ps-whitelist-table">
+        <thead>
+          <tr><th>IP / 网段</th><th>备注</th><th>添加时间</th><th>操作</th></tr>
+        </thead>
+        <tbody id="ps-whitelist-tbody">
+          <tr><td colspan="4" class="empty">加载中…</td></tr>
+        </tbody>
+      </table>
+      <div class="ps-whitelist-add">
+        <input id="ps-wl-ip" type="text" placeholder="IP 或网段，如 172.16.0.0/16">
+        <input id="ps-wl-comment" type="text" placeholder="备注（可选）">
+        <button class="btn btn-primary" id="ps-wl-add-btn" type="button">添加</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── IP 白名单模态框逻辑 ──
+(function() {
+  function escapeHtml(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  const overlay = document.getElementById('ps-modal-overlay');
+  const tbody = document.getElementById('ps-whitelist-tbody');
+
+  function openModal() { overlay.style.display = ''; loadWhitelist(); }
+  function closeModal() { overlay.style.display = 'none'; }
+
+  document.getElementById('ps-btn-whitelist').addEventListener('click', openModal);
+  document.getElementById('ps-modal-close').addEventListener('click', closeModal);
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) closeModal(); });
+
+  function loadWhitelist() {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">加载中…</td></tr>';
+    fetch('/api/ip-whitelist').then(r => r.json()).then(items => {
+      if (!items.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty">暂无白名单条目（所有 IP 均不限制）</td></tr>';
+        return;
+      }
+      tbody.innerHTML = items.map(it =>
+        '<tr>' +
+        '<td><code>' + escapeHtml(it.ip) + '</code></td>' +
+        '<td>' + escapeHtml(it.comment || '') + '</td>' +
+        '<td>' + (it.created_at || '') + '</td>' +
+        '<td><button class="btn btn-danger btn-sm" data-id="' + it.id + '">删除</button></td>' +
+        '</tr>'
+      ).join('');
+      // 绑定删除
+      tbody.querySelectorAll('button[data-id]').forEach(btn => {
+        btn.addEventListener('click', function() {
+          if (!confirm('确认删除 ' + this.closest('tr').querySelector('code').textContent + '？')) return;
+          fetch('/api/ip-whitelist/' + this.dataset.id + '/delete', {method: 'POST'})
+            .then(r => { if (r.ok) loadWhitelist(); else alert('删除失败'); });
+        });
+      });
+    }).catch(() => {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">加载失败</td></tr>';
+    });
+  }
+
+  document.getElementById('ps-wl-add-btn').addEventListener('click', function() {
+    const ip = document.getElementById('ps-wl-ip').value.trim();
+    const comment = document.getElementById('ps-wl-comment').value.trim();
+    if (!ip) { alert('请输入 IP 或网段'); return; }
+    this.disabled = true; this.textContent = '添加中…';
+    fetch('/api/ip-whitelist', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ip, comment})
+    }).then(r => r.json()).then(d => {
+      if (d.error) { alert('添加失败: ' + d.error); }
+      else { document.getElementById('ps-wl-ip').value = ''; document.getElementById('ps-wl-comment').value = ''; loadWhitelist(); }
+    }).catch(() => alert('请求失败'))
+      .finally(() => { this.disabled = false; this.textContent = '添加'; });
+  });
+})();
+</script>
+
+<!-- 电脑编号映射模态框 -->
+<div class="ps-modal-overlay" id="ps-namemap-overlay" style="display:none;">
+  <div class="ps-modal">
+    <div class="ps-modal-header">
+      <span>电脑编号映射</span>
+      <button class="ps-modal-close" id="ps-namemap-close">&times;</button>
+    </div>
+    <div class="ps-modal-body">
+      <p class="ps-modal-hint">日志 <code>user</code> 字段如 <code>CORP\zhangsan</code>，取末段 <code>zhangsan</code> 可自动对上组织架构里的中文名（拼音/邮箱前缀匹配）。少数电脑上报的值是 <code>pc-desktop-01</code> 这类对不上中文名的，在此手动把<b>电脑编号</b>映射到对应的<b>中文名</b>，之后插件状态页与事件筛选都能正确关联到人。</p>
+      <input id="ps-nm-search" type="text" placeholder="搜索电脑编号 / 中文名" style="width:100%;margin-bottom:8px;box-sizing:border-box;padding:6px 8px;border:1px solid #cbd5e1;border-radius:4px;">
+      <table class="ps-table" id="ps-namemap-table">
+        <thead>
+          <tr><th>电脑编号</th><th>中文名</th><th>操作</th></tr>
+        </thead>
+        <tbody id="ps-namemap-tbody">
+          <tr><td colspan="3" class="empty">加载中…</td></tr>
+        </tbody>
+      </table>
+      <div class="ps-whitelist-add">
+        <input id="ps-nm-account" type="text" placeholder="电脑编号，如 Andy.Liu / jy" style="flex:1;">
+        <input id="ps-nm-name" type="text" list="ps-nm-orgnames" placeholder="中文名（从组织架构选）" style="flex:1;">
+        <datalist id="ps-nm-orgnames"></datalist>
+        <button class="btn btn-primary" id="ps-nm-add-btn" type="button">添加</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── 电脑编号映射模态框逻辑 ──
+(function() {
+  function escapeHtml(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  const overlay = document.getElementById('ps-namemap-overlay');
+  const tbody = document.getElementById('ps-namemap-tbody');
+  let allMappings = [];
+  let orgNames = [];
+
+  function openModal() { overlay.style.display = ''; loadNameMap(); }
+  function closeModal() { overlay.style.display = 'none'; }
+
+  document.getElementById('ps-btn-namemap').addEventListener('click', openModal);
+  document.getElementById('ps-namemap-close').addEventListener('click', closeModal);
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) closeModal(); });
+
+  function loadNameMap() {
+    tbody.innerHTML = '<tr><td colspan="3" class="empty">加载中…</td></tr>';
+    fetch('/api/name-map').then(r => r.json()).then(d => {
+      allMappings = d.mappings || [];
+      orgNames = d.org_names || [];
+      // 填充中文名下拉辅助
+      const dl = document.getElementById('ps-nm-orgnames');
+      dl.innerHTML = orgNames.map(n => '<option value="' + escapeHtml(n) + '"></option>').join('');
+      renderRows();
+    }).catch(() => {
+      tbody.innerHTML = '<tr><td colspan="3" class="empty">加载失败</td></tr>';
+    });
+  }
+
+  function renderRows() {
+    const q = (document.getElementById('ps-nm-search').value || '').trim().toLowerCase();
+    const list = allMappings.filter(m =>
+      !q || (m.name || '').toLowerCase().includes(q) || (m.account || '').toLowerCase().includes(q)
+    );
+    if (!list.length) {
+      tbody.innerHTML = '<tr><td colspan="3" class="empty">' + (q ? '无匹配结果' : '暂无映射条目') + '</td></tr>';
+      return;
+    }
+    // 展示顺序: 电脑编号在前, 中文名在后(符合"把电脑编号映射到中文名"的操作视角)
+    tbody.innerHTML = list.map(m =>
+      '<tr>' +
+      '<td><code>' + escapeHtml(m.account) + '</code></td>' +
+      '<td>' + escapeHtml(m.name) + '</td>' +
+      '<td><button class="btn btn-danger btn-sm" data-name="' + escapeHtml(m.name) + '">删除</button></td>' +
+      '</tr>'
+    ).join('');
+    tbody.querySelectorAll('button[data-name]').forEach(btn => {
+      btn.addEventListener('click', function() {
+        const name = this.dataset.name;
+        if (!confirm('确认删除「' + name + '」的映射？')) return;
+        fetch('/api/name-map/' + encodeURIComponent(name) + '/delete', {method: 'POST'})
+          .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+          .then(() => { loadNameMap(); alert('已删除「' + name + '」的映射'); })
+          .catch(() => alert('删除失败'));
+      });
+    });
+  }
+
+  document.getElementById('ps-nm-search').addEventListener('input', renderRows);
+
+  document.getElementById('ps-nm-add-btn').addEventListener('click', function() {
+    const account = document.getElementById('ps-nm-account').value.trim();
+    const name = document.getElementById('ps-nm-name').value.trim();
+    if (!account || !name) { alert('电脑编号和中文名都要填'); return; }
+    this.disabled = true; this.textContent = '添加中…';
+    fetch('/api/name-map', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, account})
+    }).then(r => r.json()).then(d => {
+      if (d.error) { alert('添加失败: ' + d.error); }
+      else {
+        document.getElementById('ps-nm-account').value = '';
+        document.getElementById('ps-nm-name').value = '';
+        loadNameMap();
+        alert('已添加映射：电脑编号「' + account + '」→ 中文名「' + name + '」');
+      }
+    }).catch(() => alert('请求失败'))
+      .finally(() => { this.disabled = false; this.textContent = '添加'; });
+  });
+})();
+</script>
+
+<!-- 键名映射模态框 -->
+<div class="ps-modal-overlay" id="ps-llalias-overlay" style="display:none;">
+  <div class="ps-modal">
+    <div class="ps-modal-header">
+      <span>键名映射</span>
+      <button class="ps-modal-close" id="ps-llalias-close">&times;</button>
+    </div>
+    <div class="ps-modal-body">
+      <p class="ps-modal-hint">LiteLLM 里的 key 别名若写错字（如「王佳建」应为「王佳键」），会与飞书真实姓名匹配不上，导致插件状态判错。在此把<b>错误的键名</b>映射到<b>真实中文名</b>，保存后立即生效。</p>
+      <input id="ps-ll-search" type="text" placeholder="搜索键名 / 中文名" style="width:100%;margin-bottom:8px;box-sizing:border-box;padding:6px 8px;border:1px solid #cbd5e1;border-radius:4px;">
+      <table class="ps-table" id="ps-llalias-table">
+        <thead>
+          <tr><th>错误键名</th><th>真实中文名</th><th>操作</th></tr>
+        </thead>
+        <tbody id="ps-llalias-tbody">
+          <tr><td colspan="3" class="empty">加载中…</td></tr>
+        </tbody>
+      </table>
+      <div class="ps-ll-add">
+        <div class="ps-ll-add-row">
+          <input id="ps-ll-alias" type="text" placeholder="错误键名，如 王佳建">
+          <button class="btn btn-primary" id="ps-ll-add-btn" type="button">添加</button>
+        </div>
+        <div class="combo-select ps-ll-dept-combo" id="ps-ll-dept-combo">
+          <div class="combo-select-trigger" tabindex="0">
+            <span class="combo-select-text" id="ps-ll-dept-text">选择部门…</span>
+            <span class="combo-select-caret">▾</span>
+          </div>
+          <div class="combo-select-panel">
+            <input class="combo-select-search" type="text" placeholder="搜索部门…" autocomplete="off" id="ps-ll-dept-search">
+            <div class="combo-select-options" id="ps-ll-dept-options"></div>
+          </div>
+        </div>
+        <select id="ps-ll-name">
+          <option value="">选择部门后，在此选人员…</option>
+        </select>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── 键名映射模态框逻辑 ──
+(function() {
+  function escapeHtml(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  const overlay = document.getElementById('ps-llalias-overlay');
+  const tbody = document.getElementById('ps-llalias-tbody');
+  const deptCombo = document.getElementById('ps-ll-dept-combo');
+  const deptTrigger = deptCombo.querySelector('.combo-select-trigger');
+  const deptPanel = deptCombo.querySelector('.combo-select-panel');
+  const deptSearch = document.getElementById('ps-ll-dept-search');
+  const deptOptions = document.getElementById('ps-ll-dept-options');
+  const deptText = document.getElementById('ps-ll-dept-text');
+  const nameSel = document.getElementById('ps-ll-name');
+  let allMappings = [];
+  let allDepts = [];
+  let usersByDept = {};
+  let currentDept = '';
+
+  function openModal() { overlay.style.display = ''; loadMap(); }
+  function closeModal() { overlay.style.display = 'none'; closeDeptPanel(); }
+
+  document.getElementById('ps-btn-llalias').addEventListener('click', openModal);
+  document.getElementById('ps-llalias-close').addEventListener('click', closeModal);
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) closeModal(); });
+
+  // ── 部门可搜索下拉(combo-select) ──
+  function openDeptPanel() {
+    deptPanel.style.display = 'block';
+    deptSearch.value = '';
+    applyDeptFilter();
+    setTimeout(function() { deptSearch.focus(); }, 0);
+  }
+  function closeDeptPanel() { deptPanel.style.display = 'none'; }
+  deptTrigger.addEventListener('click', function(e) {
+    e.stopPropagation();
+    if (deptPanel.style.display === 'block') closeDeptPanel(); else openDeptPanel();
+  });
+  document.addEventListener('click', function(e) {
+    if (!deptCombo.contains(e.target)) closeDeptPanel();
+  });
+
+  function applyDeptFilter() {
+    const q = (deptSearch.value || '').trim().toLowerCase();
+    deptOptions.innerHTML = allDepts
+      .filter(d => !q || d.toLowerCase().indexOf(q) >= 0)
+      .map(d => '<div class="combo-option' + (d === currentDept ? ' selected' : '') + '" data-val="' + escapeHtml(d) + '">' + escapeHtml(d) + '</div>')
+      .join('') || '<div class="combo-option" style="color:#94a3b8;">无匹配部门</div>';
+    deptOptions.querySelectorAll('.combo-option[data-val]').forEach(el => {
+      el.addEventListener('click', function() { selectDept(this.dataset.val); });
+    });
+  }
+  deptSearch.addEventListener('input', applyDeptFilter);
+  deptSearch.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const first = deptOptions.querySelector('.combo-option[data-val]');
+      if (first) selectDept(first.dataset.val);
+    } else if (e.key === 'Escape') { closeDeptPanel(); }
+  });
+
+  function selectDept(val) {
+    currentDept = val;
+    deptText.textContent = val;
+    closeDeptPanel();
+    renderNames();
+  }
+
+  // ── 数据加载 ──
+  function loadMap() {
+    tbody.innerHTML = '<tr><td colspan="3" class="empty">加载中…</td></tr>';
+    fetch('/api/litellm-alias-map').then(r => r.json()).then(d => {
+      allMappings = d.mappings || [];
+      allDepts = d.departments || [];
+      usersByDept = d.users_by_dept || {};
+      renderRows();
+    }).catch(() => {
+      tbody.innerHTML = '<tr><td colspan="3" class="empty">加载失败</td></tr>';
+    });
+  }
+
+  // 根据选中的部门, 渲染该部门下的人名(防重名)
+  function renderNames() {
+    const names = currentDept ? (usersByDept[currentDept] || []) : [];
+    nameSel.innerHTML = '<option value="">选择部门后，在此选人员…</option>' +
+      names.map(n => '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>').join('');
+  }
+
+  function renderRows() {
+    const q = (document.getElementById('ps-ll-search').value || '').trim().toLowerCase();
+    const list = allMappings.filter(m =>
+      !q || (m.alias || '').toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q)
+    );
+    if (!list.length) {
+      tbody.innerHTML = '<tr><td colspan="3" class="empty">' + (q ? '无匹配结果' : '暂无映射条目') + '</td></tr>';
+      return;
+    }
+    tbody.innerHTML = list.map(m =>
+      '<tr>' +
+      '<td><code>' + escapeHtml(m.alias) + '</code></td>' +
+      '<td>' + escapeHtml(m.name) + '</td>' +
+      '<td><button class="btn btn-danger btn-sm" data-alias="' + escapeHtml(m.alias) + '">删除</button></td>' +
+      '</tr>'
+    ).join('');
+    tbody.querySelectorAll('button[data-alias]').forEach(btn => {
+      btn.addEventListener('click', function() {
+        const alias = this.dataset.alias;
+        if (!confirm('确认删除「' + alias + '」的映射？')) return;
+        fetch('/api/litellm-alias-map/' + encodeURIComponent(alias) + '/delete', {method: 'POST'})
+          .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+          .then(() => { loadMap(); alert('已删除「' + alias + '」的映射'); })
+          .catch(() => alert('删除失败'));
+      });
+    });
+  }
+
+  document.getElementById('ps-ll-search').addEventListener('input', renderRows);
+
+  document.getElementById('ps-ll-add-btn').addEventListener('click', function() {
+    const alias = document.getElementById('ps-ll-alias').value.trim();
+    const name = nameSel.value.trim();
+    if (!alias) { alert('请填错误键名'); return; }
+    if (!currentDept) { alert('请先选部门'); return; }
+    if (!name) { alert('请选人员'); return; }
+    this.disabled = true; this.textContent = '添加中…';
+    fetch('/api/litellm-alias-map', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({alias, name})
+    }).then(r => r.json()).then(d => {
+      if (d.error) { alert('添加失败: ' + d.error); }
+      else {
+        document.getElementById('ps-ll-alias').value = '';
+        currentDept = ''; deptText.textContent = '选择部门…'; renderNames();
+        loadMap();
+        alert('已添加映射：键名「' + alias + '」→ 中文名「' + name + '」（已立即生效）');
+      }
+    }).catch(() => alert('请求失败'))
+      .finally(() => { this.disabled = false; this.textContent = '添加'; });
+  });
+})();
+</script>
+
+<!-- 离线Key管理模态框 -->
+<div class="ps-modal-overlay" id="ps-offlinekeys-overlay" style="display:none;">
+  <div class="ps-modal">
+    <div class="ps-modal-header">
+      <span>离线 Key 管理</span>
+      <button class="ps-modal-close" id="ps-offlinekeys-close">&times;</button>
+    </div>
+    <div class="ps-modal-body">
+      <p class="ps-modal-hint">「离线」表示员工仍通过 LiteLLM 调用 AI，但审计插件已超过阈值时间未上报（可能被关闭/卸载）。此处可<b>批量停用</b>离线员工的 key，或<b>单个恢复</b>已停用的 key。停用/恢复均为可逆操作。</p>
+      <div class="ps-ll-add-row" style="margin-bottom:12px;">
+        <button class="btn btn-danger" id="ps-offline-block-all" type="button">停用全部离线Key</button>
+        <button class="btn btn-primary" id="ps-offline-refresh" type="button">刷新列表</button>
+      </div>
+      <table class="ps-table" id="ps-offlinekeys-table">
+        <thead>
+          <tr><th>员工</th><th>部门</th><th>Key 状态</th><th>操作</th></tr>
+        </thead>
+        <tbody id="ps-offlinekeys-tbody">
+          <tr><td colspan="4" class="empty">加载中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── 离线Key管理模态框逻辑 ──
+(function() {
+  function escapeHtml(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  const overlay = document.getElementById('ps-offlinekeys-overlay');
+  const tbody = document.getElementById('ps-offlinekeys-tbody');
+
+  function openModal() { overlay.style.display = ''; loadList(); }
+  function closeModal() { overlay.style.display = 'none'; }
+
+  document.getElementById('ps-btn-offline-keys').addEventListener('click', openModal);
+  document.getElementById('ps-offlinekeys-close').addEventListener('click', closeModal);
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) closeModal(); });
+
+  function loadList() {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">加载中…</td></tr>';
+    fetch('/api/litellm/offline-keys').then(r => r.json()).then(d => {
+      if (d.error) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty">' + escapeHtml(d.error) + '</td></tr>';
+        return;
+      }
+      const offline = d.offline || [];
+      if (!offline.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty">当前无离线员工</td></tr>';
+        return;
+      }
+      tbody.innerHTML = offline.map(u => {
+        const dept = (u.dept_path || '').split('/').pop() || '';
+        const statusHtml = u.total_count === 0
+          ? '<span class="badge badge-unused">无Key</span>'
+          : (u.blocked_count > 0
+            ? '<span class="badge badge-notinstalled">已停用 ' + u.blocked_count + '/' + u.total_count + '</span>'
+            : '<span class="badge badge-offline">未停用 ' + u.total_count + ' 个Key</span>');
+        const actionHtml = u.total_count > 0
+          ? '<button class="btn btn-primary btn-sm" data-unblock="' + escapeHtml(u.name) + '">恢复</button>'
+          : '<span style="color:#94a3b8;">—</span>';
+        return '<tr>' +
+          '<td>' + escapeHtml(u.name) + '</td>' +
+          '<td>' + escapeHtml(dept) + '</td>' +
+          '<td>' + statusHtml + '</td>' +
+          '<td>' + actionHtml + '</td>' +
+          '</tr>';
+      }).join('');
+      // 绑定恢复按钮
+      tbody.querySelectorAll('button[data-unblock]').forEach(btn => {
+        btn.addEventListener('click', function() {
+          const name = this.dataset.unblock;
+          if (!confirm('确认恢复「' + name + '」的所有 key？')) return;
+          fetch('/api/litellm/unblock/' + encodeURIComponent(name), {method: 'POST'})
+            .then(r => r.json()).then(d => {
+              if (d.error) { alert('恢复失败: ' + d.error); }
+              else { alert('已恢复「' + name + '」的 ' + (d.unblocked || 0) + ' 个 key'); loadList(); }
+            }).catch(() => alert('请求失败'));
+        });
+      });
+    }).catch(() => {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">加载失败</td></tr>';
+    });
+  }
+
+  document.getElementById('ps-offline-refresh').addEventListener('click', loadList);
+
+  document.getElementById('ps-offline-block-all').addEventListener('click', function() {
+    if (!confirm('确认停用所有离线员工的 key？停用后这些员工将无法使用 AI，直到恢复。')) return;
+    this.disabled = true; this.textContent = '停用中…';
+    fetch('/api/litellm/block-offline', {method: 'POST'})
+      .then(r => r.json()).then(d => {
+        if (d.error) { alert('停用失败: ' + d.error); }
+        else {
+          alert('已停用 ' + (d.blocked || []).length + ' 个员工的 key' +
+                (d.failed && d.failed.length ? '，' + d.failed.length + ' 个失败' : ''));
+          loadList();
+        }
+      }).catch(() => alert('请求失败'))
+      .finally(() => { this.disabled = false; this.textContent = '停用全部离线Key'; });
+  });
+})();
+</script>
+{% endblock %}

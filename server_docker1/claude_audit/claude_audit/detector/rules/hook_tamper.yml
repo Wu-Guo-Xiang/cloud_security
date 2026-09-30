@@ -1,0 +1,79 @@
+# Hook / audit 系统自身完整性:防篡改、防禁用、防消痕迹
+# 命中都是 critical 或 high —— 这些动作永远不该发生在正常业务里
+
+- id: hook_edit_settings_json
+  when: {tool: [Edit, Write, MultiEdit]}
+  match:
+    file_path_regex: '\.claude[\\/]settings(\.local)?\.json$'
+  severity: critical
+  reason: 修改 .claude/settings.json(含 hook 注册配置)
+
+- id: hook_edit_hook_script
+  when: {tool: [Edit, Write, MultiEdit]}
+  match:
+    file_path_regex: '\.claude[\\/](hooks|skills)[\\/]'
+  severity: critical
+  reason: 修改 .claude/hooks 或 .claude/skills 下的脚本本体
+
+- id: hook_edit_audit_state
+  when: {tool: [Edit, Write, MultiEdit]}
+  match:
+    file_path_regex: '(claude_audit[\\/]client[\\/])?(agent\.log|state\.json|client\.yml)$'
+  severity: high
+  reason: 篡改 audit client 的 log / state / config(可能在消痕迹)
+
+- id: hook_bash_delete_claude_config
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '\b(rm|Remove-Item|del|erase)\b[^\r\n]*\.claude[\\/](settings|hooks|skills|memory)'
+  severity: critical
+  reason: Bash 删除 .claude 配置 / hook / skill / memory 目录内文件
+
+- id: hook_bash_kill_audit_client
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '\b(taskkill|Stop-Process|kill|pkill)\b[^\r\n]*claude_audit_client'
+  severity: critical
+  reason: 尝试杀 audit client 进程(消痕迹前置动作)
+
+- id: hook_bash_stop_audit_service
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '\b(sc\s+stop|net\s+stop|systemctl\s+stop|Stop-Service)\b[^\r\n]*claude_audit'
+  severity: critical
+  reason: 尝试通过服务管理停 audit(Windows Service / systemd)
+
+- id: hook_disable_via_env
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '\b(CLAUDE_HOOKS_DISABLED|CLAUDE_SKIP_HOOKS|CLAUDE_NO_AUDIT|DISABLE_CLAUDE_HOOKS)\s*='
+  severity: high
+  reason: 通过环境变量禁用 hook / audit
+
+- id: hook_chmod_hooks_dir
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '\b(chmod|icacls|takeown)\b[^\r\n]*\.claude[\\/](hooks|skills|settings)'
+  severity: high
+  reason: 修改 .claude 目录权限(为后续篡改铺路)
+
+- id: hook_read_settings_snoop
+  when: {tool: Read}
+  match:
+    file_path_regex: '\.claude[\\/]settings(\.local)?\.json$'
+  severity: warn
+  reason: 读 .claude/settings.json(侦察 hook 配置,可能是篡改前置动作)
+
+- id: hook_edit_installer_launcher
+  when: {tool: [Edit, Write, MultiEdit]}
+  match:
+    file_path_regex: '(start_client\.(bat|vbs|ps1)|claude_audit_client\.exe)$'
+  severity: critical
+  reason: 修改 audit client 启动器 / 主 exe(供应链篡改)
+
+- id: hook_bash_overwrite_installer
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '\b(cp|copy|xcopy|robocopy|mv|move|Copy-Item|Move-Item)\b[^\r\n]*(start_client\.(bat|vbs|ps1)|claude_audit_client\.exe)'
+  severity: critical
+  reason: Bash 覆盖 audit client 启动器 / 主 exe

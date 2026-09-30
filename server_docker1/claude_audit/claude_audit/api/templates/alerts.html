@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% set active_page = 'alerts' %}
+{% block title %}告警命中 · Cloud Security AI 日志监控平台{% endblock %}
+{% block topbar %}告警命中{% endblock %}
+{% block body %}
+<h1>告警命中</h1>
+
+<section class="detail">
+  <h2>按严重级别</h2>
+  <ul class="sev-list">
+    {% for r in by_sev %}
+      <li><a href="/alerts?severity={{ r.severity }}"><span class="sev-badge sev-{{ r.severity }}">{{ r.severity }}</span> · {{ r.c }}</a></li>
+    {% endfor %}
+    <li><a href="/alerts"><span class="sev-badge" style="background:#64748b;color:#fff;">全部</span></a></li>
+  </ul>
+</section>
+
+<section class="detail">
+  <h2>命中规则（共 {{ total }} 条，第 {{ page }} / {{ total_pages }} 页）</h2>
+  <table class="hits">
+    <thead><tr><th>规则</th><th>来源</th><th>级别</th><th>命中次数</th><th>操作</th></tr></thead>
+    <tbody>
+    {% for r in by_rule %}
+      <tr class="sev-{{ r.severity }}">
+        <td><a class="rule-link" href="/events?rule_id={{ r.rule_id }}" title="{{ r.rule_id }}">{{ r.display_name }}</a></td>
+        <td>{{ r.source }}</td>
+        <td><span class="sev-badge sev-{{ r.severity }}">{{ r.severity }}</span></td>
+        <td>{{ r.c }}</td>
+        <td><a class="rule-link" href="/events?rule_id={{ r.rule_id }}">查看事件 →</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  {% if total_pages > 1 %}
+  {% set sev_q = '&severity=' ~ severity if severity else '' %}
+  <nav class="pager">
+    {% if page > 1 %}
+      <a class="pg" href="?page=1{{ sev_q }}" title="首页">«</a>
+      <a class="pg" href="?page={{ page-1 }}{{ sev_q }}" title="上一页">‹</a>
+    {% else %}
+      <span class="pg disabled">«</span>
+      <span class="pg disabled">‹</span>
+    {% endif %}
+
+    {% set win_start = (page - 2) if (page - 2) > 1 else 1 %}
+    {% set win_end = (page + 2) if (page + 2) < total_pages else total_pages %}
+
+    {% if win_start > 1 %}
+      <a class="pg" href="?page=1{{ sev_q }}">1</a>
+      {% if win_start > 2 %}<span class="ellipsis">…</span>{% endif %}
+    {% endif %}
+
+    {% for p in range(win_start, win_end + 1) %}
+      {% if p == page %}
+        <span class="pg active">{{ p }}</span>
+      {% else %}
+        <a class="pg" href="?page={{ p }}{{ sev_q }}">{{ p }}</a>
+      {% endif %}
+    {% endfor %}
+
+    {% if win_end < total_pages %}
+      {% if win_end < total_pages - 1 %}<span class="ellipsis">…</span>{% endif %}
+      <a class="pg" href="?page={{ total_pages }}{{ sev_q }}">{{ total_pages }}</a>
+    {% endif %}
+
+    {% if page < total_pages %}
+      <a class="pg" href="?page={{ page+1 }}{{ sev_q }}" title="下一页">›</a>
+      <a class="pg" href="?page={{ total_pages }}{{ sev_q }}" title="末页">»</a>
+    {% else %}
+      <span class="pg disabled">›</span>
+      <span class="pg disabled">»</span>
+    {% endif %}
+
+    <span class="pg-info">共 {{ total_pages }} 页 / {{ total }} 条规则</span>
+
+    <div class="pg-jump">
+      <span>前往</span>
+      <input type="number" id="alerts-jump-page" min="1" max="{{ total_pages }}" value="{{ page }}"
+             onkeydown="if(event.key==='Enter'){event.preventDefault();doAlertsPageJump('{{ sev_q }}', {{ total_pages }});}">
+      <span>页</span>
+      <button type="button" onclick="doAlertsPageJump('{{ sev_q }}', {{ total_pages }})">跳转</button>
+    </div>
+  </nav>
+
+  <script>
+  function doAlertsPageJump(sev_q, totalPages) {
+    var input = document.getElementById('alerts-jump-page');
+    if (!input) return;
+    var p = parseInt(input.value, 10);
+    if (isNaN(p) || p < 1) p = 1;
+    if (totalPages && p > totalPages) p = totalPages;
+    location.href = '?page=' + p + (sev_q || '');
+  }
+  </script>
+  {% endif %}
+</section>
+{% endblock %}

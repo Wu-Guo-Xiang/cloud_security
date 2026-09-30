@@ -1,0 +1,32 @@
+# claude_audit_client 配置
+# 单机自测: server_url 指向本地 uvicorn;后续部署到 Linux 服务器只需改 URL + token
+
+server_url:  http://192.168.3.57:8787
+
+# 上报身份;留空自动用 hostname-username
+client_id: ""
+
+# 与 server 端 config.yml 的 ingest.token 保持一致;留空表示无 token
+token: "your-audit-ingest-token-2026"
+
+# 采集间隔(秒);服务器规模大时可调 60~300
+interval_seconds: 15
+
+# 每轮 tick 单个源最多推多少行 / 多少字节
+batch_size: 500
+max_bytes_per_push: 2097152   # 2MB
+
+# HTTP 超时
+timeout_seconds: 10
+
+# 需要监听的 hook 日志;每个都是完整绝对路径
+log_sources:
+  - D:\cloud_security\test\logs\input_scanner.jsonl
+  - D:\cloud_security\test\logs\output_scanner.jsonl
+  - D:\cloud_security\test\logs\stop_review.jsonl
+
+# 本地进度文件(offset/line_no),失败重启后从这里恢复
+state_file: D:\cloud_security\claude_audit\data\client_state.json
+
+# agent 自己的运行日志(方便排错);留空只写 stderr
+log_file: D:\cloud_security\claude_audit\data\client_agent.log

@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}事件 #{{ rec.id }} · Cloud Security AI 日志监控平台{% endblock %}
+{% block topbar %}事件详情 #{{ rec.id }}{% endblock %}
+{% block body %}
+<a class="back-link" href="/events">« 返回事件列表</a>
+<h1>事件 #{{ rec.id }}</h1>
+
+<section class="ai-summary-card">
+  <div class="ai-summary-header">
+    <div class="ai-summary-title">
+      <span class="ai-summary-icon">AI</span>
+      <span>AI 解读</span>
+    </div>
+    <button id="btn-interpret" class="btn btn-primary ai-summary-btn" onclick="runInterpret()">
+      <span id="btn-text">生成解读</span>
+    </button>
+  </div>
+  <div id="interpret-loading" class="ai-summary-loading" style="display:none;">
+    <span class="spinner"></span>
+    <span>AI 分析中，请稍候...</span>
+  </div>
+  <div id="interpret-error" class="ai-summary-error" style="display:none;"></div>
+  <div id="interpret-result" class="ai-summary-result">
+    <div class="ai-summary-placeholder">
+      点击右上角"生成解读"按钮，AI 将按以下维度分析该事件：
+      <div class="ai-summary-points">
+        <div class="ai-summary-point"><span class="point-num">1</span>用户做了什么</div>
+        <div class="ai-summary-point"><span class="point-num">2</span>用户意图是什么</div>
+        <div class="ai-summary-point"><span class="point-num">3</span>有没有安全风险，要不要提醒他</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+function clearChildren(el) {
+  while (el.firstChild) el.removeChild(el.firstChild);
+}
+
+function showPlaceholder(result) {
+  clearChildren(result);
+  var placeholder = document.createElement('div');
+  placeholder.className = 'ai-summary-placeholder';
+  placeholder.textContent = '点击右上角"生成解读"按钮，AI 将按以下维度分析该事件：';
+  var points = document.createElement('div');
+  points.className = 'ai-summary-points';
+  [
+    ['1', '用户做了什么'],
+    ['2', '用户意图是什么'],
+    ['3', '有没有安全风险，要不要提醒他']
+  ].forEach(function(item) {
+    var div = document.createElement('div');
+    div.className = 'ai-summary-point';
+    var num = document.createElement('span');
+    num.className = 'point-num';
+    num.textContent = item[0];
+    div.appendChild(num);
+    div.appendChild(document.createTextNode(item[1]));
+    points.appendChild(div);
+  });
+  placeholder.appendChild(points);
+  result.appendChild(placeholder);
+}
+
+function renderSummary(result, summary) {
+  clearChildren(result);
+  var container = document.createElement('div');
+  container.className = 'ai-points';
+
+  var lines = (summary || '(无返回内容)').split('\n');
+  var currentNum = '1';
+  var currentBody = '';
+  var points = [];
+
+  lines.forEach(function(line) {
+    var m = line.match(/^(\d+)\.\s*(.*)$/);
+    if (m) {
+      if (currentBody.trim()) {
+        points.push({num: currentNum, body: currentBody.trim()});
+      }
+      currentNum = m[1];
+      currentBody = m[2];
+    } else {
+      currentBody += '\n' + line;
+    }
+  });
+  if (currentBody.trim() || points.length === 0) {
+    points.push({num: currentNum, body: currentBody.trim() || (summary || '(无返回内容)')});
+  }
+
+  points.forEach(function(p) {
+    var point = document.createElement('div');
+    point.className = 'ai-point';
+    var num = document.createElement('div');
+    num.className = 'ai-point-num';
+    num.textContent = p.num;
+    var body = document.createElement('div');
+    body.className = 'ai-point-body';
+    body.textContent = p.body;
+    point.appendChild(num);
+    point.appendChild(body);
+    container.appendChild(point);
+  });
+
+  result.appendChild(container);
+}
+
+function runInterpret() {
+  var btn = document.getElementById('btn-interpret');
+  var btnText = document.getElementById('btn-text');
+  var loading = document.getElementById('interpret-loading');
+  var err = document.getElementById('interpret-error');
+  var result = document.getElementById('interpret-result');
+  btn.disabled = true;
+  btnText.textContent = '解读中';
+  loading.style.display = 'flex';
+  err.style.display = 'none';
+  clearChildren(result);
+
+  fetch('/events/{{ rec.id }}/summary')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      loading.style.display = 'none';
+      btn.disabled = false;
+      btnText.textContent = '重新生成';
+      if (data.error) {
+        err.style.display = 'block';
+        err.textContent = data.error;
+        clearChildren(result);
+        return;
+      }
+      renderSummary(result, data.summary);
+    })
+    .catch(function(e) {
+      loading.style.display = 'none';
+      btn.disabled = false;
+      btnText.textContent = '重新生成';
+      err.style.display = 'block';
+      err.textContent = '请求失败: ' + e.message;
+      clearChildren(result);
+    });
+}
+</script>
+
+<section class="detail">
+  <h2>字段</h2>
+  <table class="kv">
+    {% for k, v in rec.items() %}
+      {% if k != 'raw' %}
+      <tr><th>{{ k }}</th><td>{{ v if v is not none else '' }}</td></tr>
+      {% endif %}
+    {% endfor %}
+  </table>
+</section>
+
+<section class="detail">
+  <h2>命中规则 ({{ hits|length }})</h2>
+  {% if hits %}
+  <table class="hits">
+    <thead><tr><th>来源</th><th>规则</th><th>级别</th><th>匹配内容</th><th>元数据</th></tr></thead>
+    <tbody>
+    {% for h in hits %}
+      <tr class="sev-{{ h.severity }}">
+        <td>{{ h.source }}</td>
+        <td title="{{ h.rule_id }}">{{ h.display_name }}</td>
+        <td><span class="sev-badge sev-{{ h.severity }}">{{ h.severity }}</span></td>
+        <td><code>{{ h.matched or '' }}</code></td>
+        <td><code>{{ h.meta_json or '' }}</code></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p>(无命中)</p>{% endif %}
+</section>
+
+<section class="detail">
+  <h2>原始 JSON</h2>
+  {% if raw_err %}
+    <p class="err">读取失败:{{ raw_err }}</p>
+  {% else %}
+    <pre class="raw">{{ raw_text }}</pre>
+  {% endif %}
+</section>
+{% endblock %}

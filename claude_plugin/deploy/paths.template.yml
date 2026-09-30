@@ -1,0 +1,39 @@
+# 输入安全控制 - 路径配置(部署版,install_plugin.bat 生成)
+
+# === 根路径 ===
+controlled_workdir:  '__WORKDIR__'
+security_script_dir: '__PLUGIN_SRC__'
+
+# === 派生路径 ===
+derived:
+  projects:          '{controlled_workdir}\projects'
+  output:            '{controlled_workdir}\output'
+  temp:              '{controlled_workdir}\temp'
+  temp_desensitized: '{controlled_workdir}\temp\desensitized_'
+  logs:              '__LOG_DIR__'
+  session_cache:     '{controlled_workdir}\temp\session_cache'
+  input_module:      '{security_script_dir}\input'
+  config_dir:        '{security_script_dir}\input\config'
+
+# === 写入白名单(部署版) ===
+# Claude 的 Write / Edit / MultiEdit / NotebookEdit 调用,目标路径必须落在
+# 下面任意一项下才放行;副本目录 temp_desensitized 即使路径上看起来在 controlled_workdir
+# 内,也会被 write_guard 优先按 "desensitized_dir_readonly" 规则拦下。
+# 读白名单不需要列 controlled_workdir —— 受控目录本身默认整个可读(paths.py
+# is_within_read_whitelist 先判 is_within_controlled_workdir)。
+write_whitelist:
+  - '{controlled_workdir}'                            # 整个受控目录 D:\work 可写
+  - '{controlled_workdir}\output'                     # 员工工作输出(已被上一条覆盖,保留显式)
+  - '{controlled_workdir}\temp'                       # 临时文件(已被上一条覆盖,保留显式)
+  - 'D:\After-tuomin'                                 # docx/pptx/xlsx skill 脱敏输出
+  - '__USERPROFILE__\.claude\projects'                # Claude Code auto memory
+  - '__PLUGIN_DIR__'                                  # 插件自身 config
+
+# === 读取白名单(部署版) ===
+# Claude 的 Read / Glob / LS / Grep 调用,目标路径必须落在受控目录或下面
+# 任意一项下才放行,其余一律阻断。
+# 注意:.claude\projects 必须在列 —— Claude 的 auto-memory 写在这里(写白名单
+# 已放行),读取时若不在读白名单会"自己写的自己读不了",左右互搏。
+read_whitelist:
+  - 'D:\After-tuomin'                                # skill 脱敏副本
+  - '__USERPROFILE__\.claude\projects'               # Claude Code auto memory

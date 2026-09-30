@@ -1,0 +1,34 @@
+- id: test_prompt_hard_block
+  when:
+    event: UserPromptSubmit
+  match:
+    prompt_text_contains:
+    - 账号密码
+    - 服务器地址
+    - root密码
+  severity: critical
+  reason: 严禁向 AI 提供账号密码/服务器地址/命令 AI 登录操控服务器！
+- id: test_prompt_warn
+  when:
+    event: UserPromptSubmit
+  match:
+    prompt_text_contains:
+    - 业务机密
+    - 薪资明细
+    - 客户名单
+  severity: warn
+  reason: 检测到提问中包含常规敏感词汇，请确认是否确需上传给大模型
+- id: test_read_whitelist
+  when:
+    tool: Read
+  match:
+    file_path_glob: '*cloud_security_deploy*'
+  severity: allow
+  reason: cloud_security_deploy 本地工程目录读取白名单豁免放行
+- id: prompt
+  when:
+    event: UserPromptSubmit
+  match:
+    prompt_text_contains: 登录服务器
+  severity: warn
+  reason: 禁止AI接管服务器

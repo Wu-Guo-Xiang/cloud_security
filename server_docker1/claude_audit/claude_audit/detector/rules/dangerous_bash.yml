@@ -1,0 +1,63 @@
+# 危险 Bash 命令规则集
+- id: bash_rm_rf_root
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r|-rf|-fr)\s+/(?!tmp\b|var/tmp\b)'
+  severity: critical
+  reason: rm -rf 指向根目录或非临时目录
+
+- id: bash_file_deletion
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '(?i)(^|[;&|`\n\(\)]|\bexec\b|\bxargs\b|\bsudo\b)\s*(rm|del|remove-item|unlink|rmdir|erase|trash|shred|ri|rd)(\.exe)?\b'
+  severity: critical
+  reason: 企业安全策略严禁 AI 执行文件或目录删除操作 (rm/del/Remove-Item)
+
+- id: bash_disk_destructive
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '(?i)(\bformat(\.com|\.exe)?\s+[a-z]:|\bdiskpart\b|\bmkfs(\.[a-z0-9]+)?\b|\bfdisk\b|\bdd\s+if=|\bFormat-Volume\b|\bClear-Disk\b|\bInitialize-Disk\b)'
+  severity: critical
+  reason: 严禁执行磁盘格式化或底层分区破坏操作
+
+- id: bash_curl_exfil
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '\b(curl|wget)\b.*\b(pastebin|transfer\.sh|ngrok|serveo|requestbin|webhook\.site|discord\.com/api/webhooks)'
+  severity: high
+  reason: 疑似向外传通道发送数据
+
+- id: bash_chmod_777
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '\bchmod\s+(-R\s+)?777\b'
+  severity: warn
+  reason: 赋予任意用户读写执行权限
+
+- id: bash_force_push_main
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '\bgit\s+push\s+.*(--force|-f)\b.*\b(main|master)\b'
+  severity: high
+  reason: 强推到 main/master
+
+- id: bash_read_env
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '\b(cat|type|head|tail|less|more|Get-Content)\b.*\.env(\b|\.)'
+  severity: high
+  reason: 读取 .env 文件
+
+- id: bash_read_ssh_key
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '\b(cat|type|head|tail|less|more|Get-Content)\b.*(id_rsa|id_ed25519|\.ssh/|\.aws/credentials)'
+  severity: critical
+  reason: 读取 SSH / AWS 凭证
+
+- id: bash_disable_hooks
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '--no-verify|--no-gpg-sign|-c\s+commit\.gpgsign=false'
+  severity: high
+  reason: 尝试跳过 git hook 或签名

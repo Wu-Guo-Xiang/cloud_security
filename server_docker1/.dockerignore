@@ -1,0 +1,51 @@
+# Exclude everything that doesn't belong in the server image.
+# Keep the image small; also avoid leaking client bundles / dev artifacts.
+
+# Version control
+.git
+.gitignore
+
+# Python caches / venvs
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.venv
+venv
+
+# Client-side stuff (installed on employee machines, not server)
+claude_audit/claude_audit_client
+claude_audit/deploy
+claude_audit/data
+claude_audit/client.yml
+claude_audit/start_client.bat
+claude_audit/start_client.vbs
+claude_audit/start_server.bat
+claude_audit/PUSH.md
+claude_audit/README.md
+
+# Hook scripts (run on employee machines)
+scripts
+
+# Frontend / other projects in the repo
+skill-scanner-web
+
+# Build outputs
+deploy_pkg
+test
+
+# IDE / OS
+.idea
+.vscode
+*.swp
+.DS_Store
+Thumbs.db
+
+# Dev / probe scripts
+**/_probe_*.py
+**/smoke_test.py
+**/push_smoke.py
+
+# SQLite DB (容器用 /data 卷的 DB, 不把本地测试 DB 打进镜像)
+**/*.db
+**/*.db-shm
+**/*.db-wal

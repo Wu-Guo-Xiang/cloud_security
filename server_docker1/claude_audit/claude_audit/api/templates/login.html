@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · Cloud Security AI 日志监控平台</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+  body {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #1e3a5f 100%);
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; color: #1e293b;
+  }
+  .login-card {
+    width: 360px; background: #fff; border-radius: 10px;
+    padding: 32px 32px 24px;
+    box-shadow: 0 20px 50px rgba(0,0,0,.35);
+  }
+  .login-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+  .login-brand .logo {
+    width: 42px; height: 42px; border-radius: 8px; background: #fff;
+    padding: 4px; object-fit: contain; box-shadow: 0 0 0 1px #e5e7eb;
+  }
+  .login-brand .brand-title { font-size: 18px; font-weight: 700; color: #0f172a; letter-spacing: 1px; }
+  .login-brand .brand-sub { font-size: 12px; color: #64748b; margin-top: 2px; }
+
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 12px; color: #475569; margin-bottom: 6px; font-weight: 600; }
+  .field input {
+    width: 100%; padding: 10px 12px; font-size: 14px;
+    border: 1px solid #cbd5e1; border-radius: 6px; background: #f8fafc;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .field input:focus {
+    outline: none; border-color: #3b82f6; background: #fff;
+    box-shadow: 0 0 0 3px rgba(59,130,246,.15);
+  }
+
+  .btn-login {
+    width: 100%; padding: 11px; font-size: 14px; font-weight: 600;
+    color: #fff; background: #3b82f6; border: none; border-radius: 6px;
+    cursor: pointer; transition: background .15s;
+  }
+  .btn-login:hover { background: #2563eb; }
+  .btn-login:active { background: #1d4ed8; }
+
+  .alert {
+    background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca;
+    padding: 9px 12px; border-radius: 6px; font-size: 12px;
+    margin-bottom: 16px;
+  }
+  .warn-banner {
+    background: #fffbeb; color: #92400e; border: 1px solid #fde68a;
+    padding: 9px 12px; border-radius: 6px; font-size: 12px;
+    margin-bottom: 16px;
+  }
+  .login-foot {
+    text-align: center; margin-top: 20px; font-size: 11px; color: #94a3b8;
+  }
+</style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="login-brand">
+      <img src="/static/logo.png" alt="logo" class="logo">
+      <div>
+        <div class="brand-title">Cloud Security</div>
+        <div class="brand-sub">日志监控平台</div>
+      </div>
+    </div>
+
+    {% if auth_disabled %}
+    <div class="warn-banner">
+      ⚠ 登录已禁用：未配置管理员凭证(AUDIT_ADMIN_PASSWORD_HASH / AUDIT_ADMIN_PASSWORD)。请在服务端环境变量中配置后再登录。
+    </div>
+    {% endif %}
+
+    {% if error %}
+    <div class="alert">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/login" autocomplete="on">
+      <input type="hidden" name="next" value="{{ next }}">
+      <div class="field">
+        <label for="username">用户名</label>
+        <input type="text" id="username" name="username" required autofocus
+               value="{{ username }}" autocomplete="username">
+      </div>
+      <div class="field">
+        <label for="password">密码</label>
+        <input type="password" id="password" name="password" required
+               autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn-login">登 录</button>
+    </form>
+
+    <div class="login-foot">Powered by Cloud Security Team</div>
+  </div>
+</body>
+</html>

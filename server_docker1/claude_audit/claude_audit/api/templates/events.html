@@ -1,0 +1,658 @@
+{% extends "base.html" %}
+{% set active_page = 'events' %}
+{% block title %}事件日志 · Cloud Security AI 日志监控平台{% endblock %}
+{% block topbar %}事件日志{% endblock %}
+{% block body %}
+
+<section class="nl-search-card">
+  <div class="nl-search-title">智能搜索（自然语言 → SQL）</div>
+  <div class="nl-search-row">
+    <input type="text" id="nl-question" placeholder="例如：查询张三今天访问了什么文件 / 研发部本周有哪些高危拦截 / 统计各部门今天的事件数">
+    <button type="button" onclick="askEvents(1)" class="btn btn-primary">智能搜索</button>
+    <button type="button" onclick="clearNlResults()" class="btn-clear">清除</button>
+  </div>
+  <div id="nl-result" style="display:none; margin-top:12px;">
+    <div id="nl-sql"></div>
+    <div id="nl-count"></div>
+    <div id="nl-table-wrap"></div>
+    <div id="nl-pager" style="display:none; margin-top:12px;">
+      <div class="nl-page-info"></div>
+      <nav class="nl-page-nav">
+        <button type="button" class="btn" onclick="changeNlPage(-1)">上一页</button>
+        <div class="nl-page-numbers" id="nl-page-numbers"></div>
+        <input type="number" id="nl-page-input" min="1" value="1" style="width:60px; text-align:center;" onkeydown="if(event.key==='Enter'){event.preventDefault();goNlPage();}">
+        <button type="button" class="btn" onclick="goNlPage()">跳转</button>
+        <button type="button" class="btn" onclick="changeNlPage(1)">下一页</button>
+      </nav>
+      <div class="nl-page-size">
+        每页
+        <select id="nl-page-size" onchange="askEvents(1)">
+          <option value="10">10</option>
+          <option value="20" selected>20</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+        条
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+var nlState = {question: '', page: 1, limit: 20, total_pages: 1};
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function showNlError(errMsg, sqlText) {
+  var sqlDiv = document.getElementById('nl-sql');
+  var wrap = document.getElementById('nl-table-wrap');
+  sqlDiv.textContent = sqlText || '';
+  wrap.replaceChildren();
+  var div = document.createElement('div');
+  div.className = 'nl-error';
+  div.textContent = errMsg;
+  wrap.appendChild(div);
+}
+
+function showNlEmpty() {
+  var wrap = document.getElementById('nl-table-wrap');
+  wrap.replaceChildren();
+  var div = document.createElement('div');
+  div.style.cssText = 'color:#999;padding:20px;';
+  div.textContent = '无匹配结果';
+  wrap.appendChild(div);
+}
+
+function scrollToNlTop() {
+  var card = document.querySelector('.nl-search-card');
+  if (card) {
+    card.scrollIntoView({behavior: 'smooth', block: 'start'});
+  } else {
+    window.scrollTo({top: 0, behavior: 'smooth'});
+  }
+}
+
+async function askEvents(page) {
+  var q = document.getElementById('nl-question').value.trim();
+  if (!q) return;
+  var limit = parseInt(document.getElementById('nl-page-size').value, 10) || 20;
+  page = page || 1;
+  nlState.question = q;
+  nlState.page = page;
+  nlState.limit = limit;
+
+  var resultDiv = document.getElementById('nl-result');
+  var sqlDiv = document.getElementById('nl-sql');
+  var countDiv = document.getElementById('nl-count');
+  var wrap = document.getElementById('nl-table-wrap');
+  var pager = document.getElementById('nl-pager');
+  resultDiv.style.display = 'block';
+  pager.style.display = 'none';
+  sqlDiv.textContent = '查询中...';
+  countDiv.textContent = '';
+  wrap.replaceChildren();
+
+  try {
+    var resp = await fetch('/events/ask', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({question: q, page: page, limit: limit})
+    });
+    var data = await resp.json();
+    if (data.error) {
+      showNlError(data.error, data.sql ? 'SQL: ' + data.sql : '');
+      return;
+    }
+    nlState.total_pages = data.total_pages || 1;
+    sqlDiv.textContent = 'SQL: ' + data.sql;
+    countDiv.textContent = '共 ' + data.total + ' 条结果，当前第 ' + data.page + '/' + data.total_pages + ' 页';
+    document.getElementById('nl-page-input').value = data.page;
+    if (data.rows.length === 0) {
+      showNlEmpty();
+      renderNlPager();
+      return;
+    }
+    var cols = Object.keys(data.rows[0]);
+    var table = document.createElement('table');
+    table.className = 'nl-results-table';
+
+    var thead = document.createElement('thead');
+    var tr = document.createElement('tr');
+    for (var i = 0; i < cols.length; i++) {
+      var th = document.createElement('th');
+      th.textContent = cols[i];
+      tr.appendChild(th);
+    }
+    thead.appendChild(tr);
+    table.appendChild(thead);
+
+    var tbody = document.createElement('tbody');
+    for (var r = 0; r < data.rows.length; r++) {
+      var row = data.rows[r];
+      var bodyTr = document.createElement('tr');
+      for (var j = 0; j < cols.length; j++) {
+        var td = document.createElement('td');
+        var v = row[cols[j]];
+        var display = v === null || v === undefined ? '' : String(v);
+        td.textContent = display.slice(0, 300);
+        td.title = display;
+        if (cols[j] === 'bash_command' || cols[j] === 'prompt_text' || cols[j] === 'raw') {
+          td.className = 'code';
+        }
+        bodyTr.appendChild(td);
+      }
+      tbody.appendChild(bodyTr);
+    }
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    renderNlPager();
+    scrollToNlTop();
+  } catch (e) {
+    showNlError('请求失败: ' + e.message, '');
+  }
+}
+
+function renderNlPager() {
+  var pager = document.getElementById('nl-pager');
+  var info = pager.querySelector('.nl-page-info');
+  var numbers = document.getElementById('nl-page-numbers');
+  pager.style.display = 'flex';
+  info.textContent = '第 ' + nlState.page + ' / ' + nlState.total_pages + ' 页';
+  numbers.replaceChildren();
+
+  var page = nlState.page;
+  var total = nlState.total_pages;
+  if (total <= 1) return;
+
+  var winStart = Math.max(1, page - 2);
+  var winEnd = Math.min(total, page + 2);
+
+  function addBtn(p, active) {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'nl-page-num' + (active ? ' active' : '');
+    btn.textContent = p;
+    if (!active) {
+      btn.onclick = function() { askEvents(p); };
+    }
+    numbers.appendChild(btn);
+  }
+
+  function addEllipsis() {
+    var span = document.createElement('span');
+    span.className = 'nl-page-ellipsis';
+    span.textContent = '…';
+    numbers.appendChild(span);
+  }
+
+  if (winStart > 1) {
+    addBtn(1, false);
+    if (winStart > 2) addEllipsis();
+  }
+  for (var p = winStart; p <= winEnd; p++) {
+    addBtn(p, p === page);
+  }
+  if (winEnd < total) {
+    if (winEnd < total - 1) addEllipsis();
+    addBtn(total, false);
+  }
+}
+
+function changeNlPage(delta) {
+  var newPage = nlState.page + delta;
+  if (newPage < 1 || newPage > nlState.total_pages) return;
+  askEvents(newPage);
+}
+
+function goNlPage() {
+  var input = document.getElementById('nl-page-input');
+  var p = parseInt(input.value, 10);
+  if (isNaN(p) || p < 1) p = 1;
+  if (p > nlState.total_pages) p = nlState.total_pages;
+  askEvents(p);
+}
+
+function clearNlResults() {
+  document.getElementById('nl-question').value = '';
+  document.getElementById('nl-result').style.display = 'none';
+  document.getElementById('nl-pager').style.display = 'none';
+  nlState = {question: '', page: 1, limit: 20, total_pages: 1};
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  var input = document.getElementById('nl-question');
+  if (input) {
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') askEvents(1);
+    });
+  }
+  var pageInput = document.getElementById('nl-page-input');
+  if (pageInput) {
+    pageInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') goNlPage();
+    });
+  }
+});
+</script>
+
+<section class="filter-card">
+  <div class="filter-title">筛选条件</div>
+  <form method="get" action="/events">
+    <div class="filter-grid">
+      <div class="filter-item">
+        <label>命中规则</label>
+        <select name="rule_id">
+          <option value="">-- 全部规则 --</option>
+          {% for r in rule_options %}
+            <option value="{{ r.rule_id }}" {% if r.rule_id == rule_id %}selected{% endif %}>{{ r.display_name }} ({{ r.c }})</option>
+          {% endfor %}
+        </select>
+        <span class="hint">按具体规则筛选(如 hook_read_settings_snoop)</span>
+      </div>
+      <div class="filter-item">
+        <label>严重级别</label>
+        <select name="severity">
+          <option value="">-- 全部级别 --</option>
+          {% for s in ['critical','high','warn','info'] %}
+            <option value="{{ s }}" {% if s == severity %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+        <span class="hint">仅命中级别的事件</span>
+      </div>
+      <div class="filter-item">
+        <label>事件类型</label>
+        <select name="event">
+          <option value="">-- 全部 --</option>
+          {% for e in events_list %}
+            <option value="{{ e.event }}" {% if e.event == event %}selected{% endif %}>{{ e.event }} ({{ e.c }})</option>
+          {% endfor %}
+        </select>
+        <span class="hint">PreToolUse / PostToolUse / Stop 等</span>
+      </div>
+      <div class="filter-item">
+        <label>工具</label>
+        <select name="tool">
+          <option value="">-- 全部 --</option>
+          {% for t in tools_list %}
+            <option value="{{ t.tool }}" {% if t.tool == tool %}selected{% endif %}>{{ t.tool }} ({{ t.c }})</option>
+          {% endfor %}
+        </select>
+        <span class="hint">Bash / Edit / Read / Write ...</span>
+      </div>
+      <div class="filter-item">
+        <label>部门</label>
+        <div class="combo-select" id="evt-dept-combo">
+          <div class="combo-select-trigger" tabindex="0">
+            <span class="combo-select-text" id="evt-dept-text">-- 全部部门 --</span>
+            <span class="combo-select-caret">▾</span>
+          </div>
+          <div class="combo-select-panel" id="evt-dept-panel">
+            <input class="combo-select-search" type="text" placeholder="搜索部门…" autocomplete="off" id="evt-dept-search">
+            <div class="combo-select-options" id="evt-dept-options"></div>
+          </div>
+          <input type="hidden" name="dept" id="evt-dept" value="{{ dept }}">
+        </div>
+        <span class="hint">选部门后自动过滤用户</span>
+      </div>
+      <div class="filter-item">
+        <label>用户</label>
+        <div class="combo-select" id="evt-user-combo">
+          <div class="combo-select-trigger" tabindex="0">
+            <span class="combo-select-text" id="evt-user-text">-- 全部用户 --</span>
+            <span class="combo-select-caret">▾</span>
+          </div>
+          <div class="combo-select-panel" id="evt-user-panel">
+            <input class="combo-select-search" type="text" placeholder="搜索用户…" autocomplete="off" id="evt-user-search">
+            <div class="combo-select-options" id="evt-user-options"></div>
+          </div>
+          <input type="hidden" name="user_name" id="evt-user" value="{{ user_name }}">
+        </div>
+        <span class="hint">员工姓名（可搜索）</span>
+      </div>
+      <div class="filter-item">
+        <label>客户端</label>
+        <div class="combo-select" id="evt-client-combo">
+          <div class="combo-select-trigger" tabindex="0">
+            <span class="combo-select-text" id="evt-client-text">-- 全部客户端 --</span>
+            <span class="combo-select-caret">▾</span>
+          </div>
+          <div class="combo-select-panel" id="evt-client-panel">
+            <input class="combo-select-search" type="text" placeholder="搜索客户端…" autocomplete="off" id="evt-client-search">
+            <div class="combo-select-options" id="evt-client-options"></div>
+          </div>
+          <input type="hidden" name="client_id" id="evt-client" value="{{ client_id }}">
+        </div>
+        <span class="hint">员工机器 ID（选用户后自动过滤）</span>
+      </div>
+      <div class="filter-item">
+        <label>action</label>
+        <select name="action">
+          <option value="">-- 全部 --</option>
+          <option value="pass" {% if action == 'pass' %}selected{% endif %}>pass</option>
+          <option value="warn" {% if action == 'warn' %}selected{% endif %}>warn</option>
+          <option value="block" {% if action == 'block' %}selected{% endif %}>block</option>
+        </select>
+        <span class="hint">PostToolUse 的处置结果</span>
+      </div>
+      <div class="filter-item">
+        <label>日期</label>
+        <input name="date" type="date" value="{{ date }}" placeholder="年 / 月 / 日">
+        <span class="hint">按天筛选</span>
+      </div>
+      <div class="filter-item">
+        <label>会话 ID</label>
+        <input name="session_id" type="text" value="{{ session_id }}" placeholder="session_id 前 8 位或完整值">
+        <span class="hint">跟踪单次 Claude 会话</span>
+      </div>
+      <div class="filter-item">
+        <label>关键字全文检索</label>
+        <input name="q" type="text" value="{{ q }}" placeholder="如：.env / settings.json / 192.168">
+        <span class="hint">在 bash 命令 / 文件路径 / URL 中搜索</span>
+      </div>
+      <div class="filter-item">
+        <label>每页条数</label>
+        <input name="limit" type="number" value="{{ limit }}" min="1" max="500">
+        <span class="hint">1~500</span>
+      </div>
+    </div>
+    <div class="filter-actions">
+      <button type="submit" class="btn btn-primary">应用筛选</button>
+      <a href="/events" class="btn-clear">重置</a>
+    </div>
+  </form>
+</section>
+
+{% include "_events_table.html" %}
+
+<script>
+// ── 部门+用户联动下拉框 ──
+(function() {
+  var combo = document.getElementById('evt-dept-combo');
+  var trigger = combo.querySelector('.combo-select-trigger');
+  var panel = document.getElementById('evt-dept-panel');
+  var optionsBox = document.getElementById('evt-dept-options');
+  var deptSearch = document.getElementById('evt-dept-search');
+  var deptHidden = document.getElementById('evt-dept');
+  var deptText = document.getElementById('evt-dept-text');
+
+  // 用户 combo
+  var userCombo = document.getElementById('evt-user-combo');
+  var userTrigger = userCombo.querySelector('.combo-select-trigger');
+  var userPanel = document.getElementById('evt-user-panel');
+  var userOptionsBox = document.getElementById('evt-user-options');
+  var userSearch = document.getElementById('evt-user-search');
+  var userHidden = document.getElementById('evt-user');
+  var userText = document.getElementById('evt-user-text');
+
+  // 客户端 combo
+  var clientCombo = document.getElementById('evt-client-combo');
+  var clientTrigger = clientCombo.querySelector('.combo-select-trigger');
+  var clientPanel = document.getElementById('evt-client-panel');
+  var clientOptionsBox = document.getElementById('evt-client-options');
+  var clientSearch = document.getElementById('evt-client-search');
+  var clientHidden = document.getElementById('evt-client');
+  var clientText = document.getElementById('evt-client-text');
+
+  var orgData = null;
+  var currentDept = '{{ dept }}';
+  var currentUser = '{{ user_name }}';
+  var currentClient = '{{ client_id }}';
+  var allDepts = [];  // 全部部门, 供搜索过滤
+  var allUsers = [];  // 当前部门下全部用户(中文名), 供搜索过滤
+  // 全部客户端(来自后端 clients: [{client_id, c}]) + 用户->客户端 映射
+  var allClients = [
+    {% for c in clients %}{ id: {{ c.client_id|tojson }}, c: {{ c.c }} }{% if not loop.last %},{% endif %}{% endfor %}
+  ];
+  var userClientsMap = null;  // {用户显示名: [client_id, ...]}
+
+  function escapeHtml(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── 部门下拉 ──
+  function openPanel() {
+    panel.style.display = 'block';
+    deptSearch.value = '';
+    applyDeptFilter();
+    setTimeout(function() { deptSearch.focus(); }, 0);
+  }
+  function closePanel() { panel.style.display = 'none'; }
+  function togglePanel() {
+    if (panel.style.display === 'block') closePanel(); else openPanel();
+  }
+
+  trigger.addEventListener('click', togglePanel);
+  document.addEventListener('click', function(e) {
+    if (!combo.contains(e.target)) closePanel();
+  });
+
+  function selectDept(val, label) {
+    currentDept = val;
+    deptHidden.value = val;
+    deptText.textContent = label || val || '-- 全部部门 --';
+    closePanel();
+    // 切换部门 → 用户列表刷新, 清空已选用户
+    currentUser = '';
+    userHidden.value = '';
+    userText.textContent = '-- 全部用户 --';
+    renderUsers(currentDept);
+    // 部门变了用户也清空 → 客户端回到全部
+    renderClients('');
+  }
+
+  function renderDepts(depts) {
+    allDepts = depts || [];
+    if (currentDept && allDepts.indexOf(currentDept) >= 0) {
+      deptText.textContent = currentDept;
+    }
+    applyDeptFilter();
+  }
+
+  function applyDeptFilter() {
+    var q = (deptSearch.value || '').trim().toLowerCase();
+    var html = '<div class="combo-option' + (!currentDept ? ' selected' : '') + '" data-val="" data-label="-- 全部部门 --">-- 全部部门 --</div>';
+    allDepts.forEach(function(d) {
+      if (q && d.toLowerCase().indexOf(q) < 0) return;
+      html += '<div class="combo-option' + (d === currentDept ? ' selected' : '') + '" data-val="' + escapeHtml(d) + '" data-label="' + escapeHtml(d) + '">' + escapeHtml(d) + '</div>';
+    });
+    optionsBox.innerHTML = html;
+    optionsBox.querySelectorAll('.combo-option').forEach(function(el) {
+      el.addEventListener('click', function() {
+        selectDept(this.dataset.val, this.dataset.label);
+      });
+    });
+  }
+
+  deptSearch.addEventListener('input', applyDeptFilter);
+  deptSearch.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      var first = optionsBox.querySelector('.combo-option[data-val]:not([data-val=""])');
+      if (first) selectDept(first.dataset.val, first.dataset.label);
+    } else if (e.key === 'Escape') {
+      closePanel();
+    }
+  });
+
+  // ── 用户下拉 ──
+  function openUserPanel() {
+    userPanel.style.display = 'block';
+    userSearch.value = '';
+    applyUserFilter();
+    setTimeout(function() { userSearch.focus(); }, 0);
+  }
+  function closeUserPanel() { userPanel.style.display = 'none'; }
+  function toggleUserPanel() {
+    if (userPanel.style.display === 'block') closeUserPanel(); else openUserPanel();
+  }
+
+  userTrigger.addEventListener('click', toggleUserPanel);
+  document.addEventListener('click', function(e) {
+    if (!userCombo.contains(e.target)) closeUserPanel();
+  });
+
+  function selectUser(val, label) {
+    currentUser = val;
+    userHidden.value = val;
+    userText.textContent = label || val || '-- 全部用户 --';
+    closeUserPanel();
+    // 切换用户 → 客户端列表刷新为该用户的客户端; 若当前已选客户端不在其中则清空
+    renderClients(val);
+  }
+
+  // 渲染当前部门下的用户列表(中文名去重)
+  function renderUsers(dept) {
+    allUsers = [];
+    if (!orgData) { applyUserFilter(); return; }
+    var usersByDept = orgData.users_by_dept || {};
+    var seen = {};
+    if (dept) {
+      Object.keys(usersByDept).forEach(function(dp) {
+        if (dp === dept || dp.startsWith(dept + '/')) {
+          (usersByDept[dp] || []).forEach(function(u) {
+            if (!seen[u.name]) { seen[u.name] = true; allUsers.push(u.name); }
+          });
+        }
+      });
+    } else {
+      Object.keys(usersByDept).forEach(function(dp) {
+        (usersByDept[dp] || []).forEach(function(u) {
+          if (!seen[u.name]) { seen[u.name] = true; allUsers.push(u.name); }
+        });
+      });
+    }
+    allUsers.sort();
+    // 回显当前选中
+    if (currentUser && allUsers.indexOf(currentUser) >= 0) {
+      userText.textContent = currentUser;
+    }
+    applyUserFilter();
+  }
+
+  function applyUserFilter() {
+    var q = (userSearch.value || '').trim().toLowerCase();
+    var html = '<div class="combo-option' + (!currentUser ? ' selected' : '') + '" data-val="" data-label="-- 全部用户 --">-- 全部用户 --</div>';
+    allUsers.forEach(function(name) {
+      if (q && name.toLowerCase().indexOf(q) < 0) return;
+      html += '<div class="combo-option' + (name === currentUser ? ' selected' : '') + '" data-val="' + escapeHtml(name) + '" data-label="' + escapeHtml(name) + '">' + escapeHtml(name) + '</div>';
+    });
+    userOptionsBox.innerHTML = html;
+    userOptionsBox.querySelectorAll('.combo-option').forEach(function(el) {
+      el.addEventListener('click', function() {
+        selectUser(this.dataset.val, this.dataset.label);
+      });
+    });
+  }
+
+  userSearch.addEventListener('input', applyUserFilter);
+  userSearch.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      var first = userOptionsBox.querySelector('.combo-option[data-val]:not([data-val=""])');
+      if (first) selectUser(first.dataset.val, first.dataset.label);
+    } else if (e.key === 'Escape') {
+      closeUserPanel();
+    }
+  });
+
+  // 加载组织架构数据
+  fetch('/api/org-users').then(function(r) { return r.json(); }).then(function(data) {
+    orgData = data;
+    renderDepts(data.departments || []);
+    renderUsers(currentDept);
+  }).catch(function() {
+    deptText.textContent = '加载失败';
+  });
+
+  // ── 客户端下拉(随选中用户级联过滤) ──
+  function openClientPanel() {
+    clientPanel.style.display = 'block';
+    clientSearch.value = '';
+    applyClientFilter();
+    setTimeout(function() { clientSearch.focus(); }, 0);
+  }
+  function closeClientPanel() { clientPanel.style.display = 'none'; }
+  function toggleClientPanel() {
+    if (clientPanel.style.display === 'block') closeClientPanel(); else openClientPanel();
+  }
+  clientTrigger.addEventListener('click', toggleClientPanel);
+  document.addEventListener('click', function(e) {
+    if (!clientCombo.contains(e.target)) closeClientPanel();
+  });
+
+  function selectClient(val, label) {
+    currentClient = val;
+    clientHidden.value = val;
+    clientText.textContent = label || val || '-- 全部客户端 --';
+    closeClientPanel();
+  }
+
+  // 根据选中用户计算可显示的客户端列表
+  function visibleClients(userName) {
+    // 未选用户 → 全部客户端; 选了用户 → 仅该用户的客户端(若映射未加载则回退全部)
+    if (!userName) return allClients;
+    if (userClientsMap && userClientsMap[userName]) {
+      var allow = {}; userClientsMap[userName].forEach(function(id){ allow[id] = true; });
+      return allClients.filter(function(c){ return allow[c.id]; });
+    }
+    return allClients;
+  }
+
+  function renderClients(userName) {
+    // 若当前已选客户端不在过滤后的可见集合中 → 清空
+    var vis = visibleClients(userName);
+    if (currentClient && !vis.some(function(c){ return c.id === currentClient; })) {
+      currentClient = '';
+      clientHidden.value = '';
+      clientText.textContent = '-- 全部客户端 --';
+    } else if (currentClient) {
+      clientText.textContent = currentClient;
+    }
+    applyClientFilter();
+  }
+
+  function applyClientFilter() {
+    var vis = visibleClients(currentUser);
+    var q = (clientSearch.value || '').trim().toLowerCase();
+    var html = '<div class="combo-option' + (!currentClient ? ' selected' : '') + '" data-val="" data-label="-- 全部客户端 --">-- 全部客户端 --</div>';
+    vis.forEach(function(c) {
+      if (q && c.id.toLowerCase().indexOf(q) < 0) return;
+      var label = c.id + ' (' + c.c + ')';
+      html += '<div class="combo-option' + (c.id === currentClient ? ' selected' : '') + '" data-val="' + escapeHtml(c.id) + '" data-label="' + escapeHtml(label) + '">' + escapeHtml(label) + '</div>';
+    });
+    clientOptionsBox.innerHTML = html;
+    clientOptionsBox.querySelectorAll('.combo-option').forEach(function(el) {
+      el.addEventListener('click', function() {
+        selectClient(this.dataset.val, this.dataset.label);
+      });
+    });
+  }
+
+  clientSearch.addEventListener('input', applyClientFilter);
+  clientSearch.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      var first = clientOptionsBox.querySelector('.combo-option[data-val]:not([data-val=""])');
+      if (first) selectClient(first.dataset.val, first.dataset.label);
+    } else if (e.key === 'Escape') {
+      closeClientPanel();
+    }
+  });
+
+  // 初次渲染客户端(回显当前选中) + 异步加载用户->客户端映射
+  renderClients(currentUser);
+  fetch('/api/user-clients').then(function(r) { return r.json(); }).then(function(data) {
+    userClientsMap = data.user_clients || {};
+    // 映射就绪后若已选用户, 重新过滤一次(此时可见集合可能变窄)
+    if (currentUser) renderClients(currentUser);
+  }).catch(function() { /* 映射加载失败不影响筛选, 回退全部客户端 */ });
+})();
+</script>
+{% endblock %}

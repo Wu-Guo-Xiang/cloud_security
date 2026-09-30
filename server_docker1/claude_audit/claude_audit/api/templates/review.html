@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% set active_page = 'review' %}
+{% block title %}审查分析 · Cloud Security AI 日志监控平台{% endblock %}
+{% block topbar %}审查分析{% endblock %}
+{% block body %}
+<h1>脱敏检测结果审查</h1>
+<p class="review-desc">选择时间范围，AI 将审查该时间段内 UserPromptSubmit 事件的检测结果，判断是否存在误判。</p>
+
+{% if saved_reviews %}
+<section class="filter-card">
+  <div class="filter-title">历史审查报告</div>
+  <table class="review-history-table">
+    <thead>
+      <tr><th>审查范围</th><th>生成时间</th><th>操作</th></tr>
+    </thead>
+    <tbody>
+    {% for rv in saved_reviews %}
+      <tr>
+        <td>{{ rv.date_range }}</td>
+        <td>{{ rv.created_at }}</td>
+        <td>
+          <a class="btn btn-primary btn-sm" href="/review/download/{{ rv.filename }}">📥 下载</a>
+          <a class="btn btn-clear btn-sm" href="/review/view/{{ rv.filename }}" target="_blank">👁 查看</a>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section class="filter-card">
+  <div class="filter-title">选择审查范围</div>
+  <div class="filter-grid">
+    <div class="filter-item">
+      <label for="start_date">开始日期</label>
+      <input type="date" id="start_date" value="{{ min_ts }}" min="{{ min_ts }}" max="{{ max_ts }}">
+    </div>
+    <div class="filter-item">
+      <label for="end_date">结束日期</label>
+      <input type="date" id="end_date" value="{{ max_ts }}" min="{{ min_ts }}" max="{{ max_ts }}">
+    </div>
+  </div>
+  <div class="filter-actions">
+    <button id="btn-analyze" class="btn btn-primary" onclick="startAnalysis()">开始分析</button>
+  </div>
+</section>
+
+<div id="review-progress" class="review-progress" style="display:none;">
+  <div class="progress-header">
+    <span class="spinner"></span>
+    <span id="progress-text">正在分析...</span>
+  </div>
+  <div class="progress-bar-wrap">
+    <div id="progress-bar" class="progress-bar" style="width:0%"></div>
+  </div>
+  <div id="progress-detail" class="progress-detail">准备中...</div>
+</div>
+
+<div id="review-error" class="review-error" style="display:none;"></div>
+
+<div id="review-result" style="display:none;">
+  <section class="review-stats">
+    <div class="stat-card">
+      <div class="stat-num" id="stat-total">0</div>
+      <div class="stat-label">总事件数</div>
+    </div>
+    <div class="stat-card stat-fp">
+      <div class="stat-num" id="stat-fp">0</div>
+      <div class="stat-label">❌ 误判</div>
+    </div>
+    <div class="stat-card stat-tp">
+      <div class="stat-num" id="stat-tp">0</div>
+      <div class="stat-label">✅ 真正危险</div>
+    </div>
+    <div class="stat-card stat-uc">
+      <div class="stat-num" id="stat-uc">0</div>
+      <div class="stat-label">❓ 不确定</div>
+    </div>
+  </section>
+
+  <div class="review-download-bar">
+    <a id="btn-download" class="btn btn-primary" href="#">📥 下载 Markdown 报告</a>
+  </div>
+
+  <section class="filter-card">
+    <div class="filter-title">审查结果明细</div>
+    <table class="review-table">
+      <thead>
+        <tr>
+          <th>事件 ID</th>
+          <th>时间</th>
+          <th>用户</th>
+          <th>AI 判定</th>
+          <th>理由</th>
+          <th>建议</th>
+          <th>用户决策</th>
+          <th>检测类别</th>
+          <th>原始提示词</th>
+        </tr>
+      </thead>
+      <tbody id="review-tbody"></tbody>
+    </table>
+  </section>
+</div>
+
+<script>
+var currentTaskId = '';
+var pollTimer = null;
+
+function startAnalysis() {
+  var start = document.getElementById('start_date').value;
+  var end = document.getElementById('end_date').value;
+  if (!start || !end) { alert('请选择开始和结束日期'); return; }
+  if (start > end) { alert('开始日期不能晚于结束日期'); return; }
+
+  var btn = document.getElementById('btn-analyze');
+  var progDiv = document.getElementById('review-progress');
+  var errDiv = document.getElementById('review-error');
+  var result = document.getElementById('review-result');
+
+  btn.disabled = true;
+  btn.textContent = '分析中...';
+  progDiv.style.display = 'block';
+  errDiv.style.display = 'none';
+  result.style.display = 'none';
+  document.getElementById('progress-bar').style.width = '0%';
+  document.getElementById('progress-text').textContent = '正在启动分析...';
+  document.getElementById('progress-detail').textContent = '准备中...';
+
+  fetch('/review/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({start_date: start, end_date: end})
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.error) {
+      progDiv.style.display = 'none';
+      btn.disabled = false;
+      btn.textContent = '开始分析';
+      errDiv.style.display = 'block';
+      errDiv.textContent = data.error;
+      return;
+    }
+    currentTaskId = data.task_id;
+    // 开始轮询进度
+    pollProgress(data.task_id, data.total_batches);
+  })
+  .catch(function(e) {
+    progDiv.style.display = 'none';
+    btn.disabled = false;
+    btn.textContent = '开始分析';
+    errDiv.style.display = 'block';
+    errDiv.textContent = '请求失败: ' + e.message;
+  });
+}
+
+function pollProgress(taskId, totalBatches) {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(function() {
+    fetch('/review/progress/' + taskId)
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.status === 'running') {
+          var done = data.done_batches || 0;
+          var total = data.total_batches || totalBatches || 1;
+          var pct = Math.round(done / total * 100);
+          document.getElementById('progress-bar').style.width = pct + '%';
+          document.getElementById('progress-text').textContent = '正在分析... ' + pct + '%';
+          document.getElementById('progress-detail').textContent =
+            '批次 ' + done + ' / ' + total + '（共 ' + data.total + ' 条事件）';
+        } else if (data.status === 'done') {
+          clearInterval(pollTimer);
+          pollTimer = null;
+          document.getElementById('progress-bar').style.width = '100%';
+          document.getElementById('progress-text').textContent = '分析完成!';
+          document.getElementById('progress-detail').textContent =
+            '共 ' + data.total + ' 条事件，分析完毕';
+          var btn = document.getElementById('btn-analyze');
+          btn.disabled = false;
+          btn.textContent = '开始分析';
+
+          // 隐藏进度条，显示结果
+          setTimeout(function() {
+            document.getElementById('review-progress').style.display = 'none';
+          }, 800);
+
+          renderResults(data);
+          document.getElementById('review-result').style.display = 'block';
+        }
+      })
+      .catch(function(e) {
+        // 网络短暂中断不中断轮询
+      });
+  }, 1500);
+}
+
+function renderResults(data) {
+  document.getElementById('stat-total').textContent = data.total || 0;
+  document.getElementById('stat-fp').textContent = data.fp_count || 0;
+  document.getElementById('stat-tp').textContent = data.tp_count || 0;
+  document.getElementById('stat-uc').textContent = data.uncertain_count || 0;
+
+  // 下载按钮
+  var dlBtn = document.getElementById('btn-download');
+  if (data.md_filename) {
+    dlBtn.href = '/review/download/' + data.md_filename;
+    dlBtn.style.display = 'inline-flex';
+  } else {
+    dlBtn.style.display = 'none';
+  }
+
+  // 结果表格
+  var tbody = document.getElementById('review-tbody');
+  tbody.innerHTML = '';
+  var results = data.results || [];
+  results.forEach(function(r) {
+    var tr = document.createElement('tr');
+    var verdictClass = 'verdict-uc';
+    var verdictText = '❓ 不确定';
+    if (r.verdict === 'false_positive') {
+      verdictClass = 'verdict-fp';
+      verdictText = '❌ 误判';
+    } else if (r.verdict === 'true_positive') {
+      verdictClass = 'verdict-tp';
+      verdictText = '✅ 真正危险';
+    }
+    // 截断 prompt_text 用于表格显示; 空则显示 (空) 标记
+    var pt = r.prompt_text || '';
+    var ptDisplay = pt.length > 120 ? pt.substring(0, 120) + '...' : pt;
+    var ptCell = pt
+      ? '<td class="td-prompt" title="' + pt.replace(/"/g, '&quot;').replace(/</g, '&lt;') + '">' + ptDisplay + '</td>'
+      : '<td class="td-prompt td-empty" title="该事件未记录提示词（旧版客户端或硬阻断分支未写入）">（空）</td>';
+    tr.innerHTML =
+      '<td><a href="/events/' + r.event_id + '">#' + r.event_id + '</a></td>' +
+      '<td class="td-ts">' + (r.ts || '') + '</td>' +
+      '<td>' + (r.user || '') + '</td>' +
+      '<td><span class="verdict-badge ' + verdictClass + '">' + verdictText + '</span></td>' +
+      '<td class="td-reason">' + (r.reason || '') + '</td>' +
+      '<td class="td-suggestion">' + (r.suggestion || '') + '</td>' +
+      '<td>' + (r.block_reason || '') + '</td>' +
+      '<td>' + (r.rule_ids || '') + '</td>' +
+      ptCell;
+    tbody.appendChild(tr);
+  });
+}
+</script>
+{% endblock %}

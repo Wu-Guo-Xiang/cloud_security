@@ -1,0 +1,28 @@
+# 外传 / 出口异常
+- id: webfetch_public_paste_or_webhook
+  when: {tool: WebFetch}
+  match:
+    url_regex: '(pastebin\.com|paste\.ee|transfer\.sh|webhook\.site|requestbin|ngrok\.io|serveo\.net|discord\.com/api/webhooks)'
+  severity: high
+  reason: WebFetch 指向已知外传服务
+
+- id: webfetch_private_ip
+  when: {tool: WebFetch}
+  match:
+    url_regex: '://(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)'
+  severity: warn
+  reason: WebFetch 指向私网 / link-local(内网探测)
+
+- id: bash_dns_exfil
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '\b(nslookup|dig|host)\b.*\.(interact\.sh|oast\.pro|oast\.me|oastify\.com|burpcollaborator\.net|dnslog\.cn)'
+  severity: high
+  reason: DNS 外带回连域
+
+- id: bash_reverse_shell
+  when: {tool: Bash}
+  match:
+    bash_command_regex: '(bash\s+-i.*/dev/tcp/|nc\s+-e|ncat\s+-e|python\s+-c\s+.*socket\.socket.*connect|powershell.*New-Object\s+Net\.Sockets\.TCPClient)'
+  severity: critical
+  reason: 反弹 shell 特征

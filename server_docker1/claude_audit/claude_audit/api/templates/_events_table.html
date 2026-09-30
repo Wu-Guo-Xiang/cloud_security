@@ -1,0 +1,133 @@
+{% set qs %}event={{ event }}&tool={{ tool }}&action={{ action }}&session_id={{ session_id }}&user_name={{ user_name }}&dept={{ dept }}&client_id={{ client_id }}&date={{ date }}&rule_id={{ rule_id }}&severity={{ severity }}&q={{ q }}&limit={{ limit }}{% endset %}
+<div id="events-table"
+     data-refresh-url="/events?partial=1&page={{ page }}&{{ qs }}">
+<p class="meta">共 <b>{{ total }}</b> 条 · 第 {{ page }} / {{ total_pages }} 页 · 每页 {{ limit }} · <span class="autoinfo">每 5s 自动刷新</span></p>
+<details class="legend">
+  <summary>字段说明(点击展开)</summary>
+  <ul>
+    <li><b>action</b> — 只 <code>PostToolUse</code> 有值。<code>pass</code>=输出扫描无敏感;<code>warn</code>=有告警但未阻断;空=特殊分支。</li>
+    <li><b>决策 (block_reason)</b> — 记录安全检测与敏感命中后的处置:
+      <ul>
+        <li><span class="br br-blocked">🚫 系统策略阻断</span> 命中企业安全策略（高危命令/删除操作/密钥外泄等）由网关直接阻断</li>
+        <li><span class="br br-approved">✅ 用户确认发送</span> 弹窗后员工点"继续",<b>审计重点</b></li>
+        <li><span class="br br-blocked">🚫 用户取消发送</span> 弹窗后员工点"取消"/关窗/15s 超时(fail-closed)</li>
+        <li><span class="br br-approved">⚪ 白名单放行</span> 白名单规则或项目路径豁免放行</li>
+        <li><span class="br br-noredirect">⛔ 无副本通道</span> Grep/WebFetch 等无法脱敏的工具命中敏感 → 硬拦(<code>no_redirect_channel</code>)</li>
+        <li>(空) 未触发扫描或正常放行</li>
+      </ul>
+    </li>
+    <li><b>hook</b> — 员工机 scanner 脚本命中数(input/output/stop 一手判定)。</li>
+    <li><b>engine</b> — 本平台 YAML 规则引擎独立复检数。</li>
+  </ul>
+</details>
+<table class="events">
+  <thead>
+    <tr>
+      <th>编号</th><th>时间</th><th>事件</th><th>工具</th><th>处置</th>
+      <th>决策</th>
+      <th>用户 / 客户端</th>
+      <th>命令 / 文件 / URL / 提示词</th>
+      <th title="scanner 命中数">hook</th>
+      <th title="本平台规则引擎命中数">engine</th>
+      <th>session</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in rows %}
+    {% set br = r.block_reason %}
+    <tr class="{% if r.engine_hit_count or r.hook_match_count or br == 'user_approved' or br == 'system_blocked' %}hit{% endif %}">
+      <td><a href="/events/{{ r.id }}">{{ r.id }}</a></td>
+      <td class="ts">{{ r.ts }}</td>
+      <td>{{ r.event or '' }}</td>
+      <td>{{ r.tool or '' }}</td>
+      <td>{{ r.action or '' }}</td>
+      <td class="decision">
+        {% if br == 'user_approved' %}<span class="br br-approved">✅ 用户确认发送</span>
+        {% elif br == 'user_blocked' %}<span class="br br-blocked">🚫 用户取消</span>
+        {% elif br == 'system_blocked' %}<span class="br br-blocked">🚫 系统策略阻断</span>
+        {% elif br == 'whitelist_approved' %}<span class="br br-approved">⚪ 白名单放行</span>
+        {% elif br == 'no_redirect_channel' %}<span class="br br-noredirect">⛔ 无副本通道</span>
+        {% elif br %}<span class="br br-other">{{ br }}</span>
+        {% endif %}
+      </td>
+      <td class="who">
+        <div class="user"{% if r.user_display and r.user_display != r.user %} title="原始账户: {{ r.user }}"{% endif %}>{{ r.user_display or r.user or '' }}</div>
+        <div class="cid">{{ r.client_id or r.vm_hostname or '' }}</div>
+      </td>
+      <td class="preview">
+        {% if r.bash_command %}<code>{{ r.bash_command[:160] }}</code>{% endif %}
+        {% if r.file_path %}<span class="path">{{ r.file_path }}</span>{% endif %}
+        {% if r.url %}<span class="url">{{ r.url }}</span>{% endif %}
+        {% if r.prompt_text %}<span class="prompt" title="{{ r.prompt_text }}">💬 {{ r.prompt_text[:200] }}{% if r.prompt_text|length > 200 %}…{% endif %}</span>{% endif %}
+      </td>
+      <td>{{ r.hook_match_count }}</td>
+      <td>{{ r.engine_hit_count }}</td>
+      <td class="sid">{{ (r.session_id or '')[:8] }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<nav class="pager">
+  {# 上一页 #}
+  {% if page > 1 %}
+    <a class="pg" href="?page=1&{{ qs }}" title="首页">«</a>
+    <a class="pg" href="?page={{ page-1 }}&{{ qs }}" title="上一页">‹</a>
+  {% else %}
+    <span class="pg disabled">«</span>
+    <span class="pg disabled">‹</span>
+  {% endif %}
+
+  {# 数字页码窗口: 当前页两侧各 2 个 #}
+  {% set win_start = (page - 2) if (page - 2) > 1 else 1 %}
+  {% set win_end = (page + 2) if (page + 2) < total_pages else total_pages %}
+
+  {% if win_start > 1 %}
+    <a class="pg" href="?page=1&{{ qs }}">1</a>
+    {% if win_start > 2 %}<span class="ellipsis">…</span>{% endif %}
+  {% endif %}
+
+  {% for p in range(win_start, win_end + 1) %}
+    {% if p == page %}
+      <span class="pg active">{{ p }}</span>
+    {% else %}
+      <a class="pg" href="?page={{ p }}&{{ qs }}">{{ p }}</a>
+    {% endif %}
+  {% endfor %}
+
+  {% if win_end < total_pages %}
+    {% if win_end < total_pages - 1 %}<span class="ellipsis">…</span>{% endif %}
+    <a class="pg" href="?page={{ total_pages }}&{{ qs }}">{{ total_pages }}</a>
+  {% endif %}
+
+  {# 下一页 #}
+  {% if page < total_pages %}
+    <a class="pg" href="?page={{ page+1 }}&{{ qs }}" title="下一页">›</a>
+    <a class="pg" href="?page={{ total_pages }}&{{ qs }}" title="末页">»</a>
+  {% else %}
+    <span class="pg disabled">›</span>
+    <span class="pg disabled">»</span>
+  {% endif %}
+
+  <span class="pg-info">共 {{ total_pages }} 页 / {{ total }} 条</span>
+
+  <div class="pg-jump">
+    <span>前往</span>
+    <input type="number" id="events-jump-page" min="1" max="{{ total_pages }}" value="{{ page }}"
+           onkeydown="if(event.key==='Enter'){event.preventDefault();doEventsPageJump('{{ qs }}', {{ total_pages }});}">
+    <span>页</span>
+    <button type="button" onclick="doEventsPageJump('{{ qs }}', {{ total_pages }})">跳转</button>
+  </div>
+</nav>
+
+<script>
+function doEventsPageJump(qs, totalPages) {
+  var input = document.getElementById('events-jump-page');
+  if (!input) return;
+  var p = parseInt(input.value, 10);
+  if (isNaN(p) || p < 1) p = 1;
+  if (totalPages && p > totalPages) p = totalPages;
+  location.href = '?page=' + p + (qs ? '&' + qs : '');
+}
+</script>
+</div>

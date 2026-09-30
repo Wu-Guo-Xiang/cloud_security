@@ -1,0 +1,10 @@
+{
+  "session_id": "sess_test_recursion",
+  "transcript_path": "/tmp/transcript.jsonl",
+  "cwd": "D:\\cloud_security\\test",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "D:\\cloud_security\\test\\temp\\desensitized_\\sess_test_recursion\\dummy.docx"
+  }
+}

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% set active_page = 'stats' %}
+{% block title %}统计 · Cloud Security AI 日志监控平台{% endblock %}
+{% block topbar %}统计{% endblock %}
+{% block body %}
+
+<div class="dash-hero">
+  <div class="dash-hero-label">STATISTICS</div>
+  <div class="dash-hero-title">命令统计</div>
+  <div class="dash-hero-sub">高频 Bash 命令排行（其余维度的汇总请见数据大屏）</div>
+</div>
+
+<div class="dash-grid">
+  <div class="dash-card col-12">
+    <div class="dash-card-title">Top 10 Bash 命令</div>
+    {% if top_bash %}
+    <table>
+      <thead><tr><th>命令</th><th>次数</th></tr></thead>
+      <tbody>
+      {% for r in top_bash %}
+        <tr><td><code>{{ r.bash_command[:120] }}</code></td><td>{{ r.c }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="empty">无数据</p>{% endif %}
+  </div>
+</div>
+
+{% endblock %}

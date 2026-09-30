@@ -1,0 +1,27 @@
+# 输入安全控制 - 路径配置(部署版,install_plugin.bat 生成)
+
+# === 根路径 ===
+controlled_workdir:  'D:\work'
+security_script_dir: 'D:\cloud_security\scripts'
+
+# === 派生路径 ===
+derived:
+  projects:          '{controlled_workdir}\projects'
+  output:            '{controlled_workdir}\output'
+  temp:              '{controlled_workdir}\temp'
+  temp_desensitized: '{controlled_workdir}\temp\desensitized_'
+  logs:              '{controlled_workdir}\logs'
+  session_cache:     '{controlled_workdir}\temp\session_cache'
+  input_module:      '{security_script_dir}\input'
+  config_dir:        '{security_script_dir}\input\config'
+
+# === 写入白名单(部署版) ===
+# Claude 的 Write / Edit / MultiEdit / NotebookEdit 调用,目标路径必须落在
+# 下面任意一项下才放行;副本目录 temp_desensitized 即使路径上看起来在 controlled_workdir
+# 内,也会被 write_guard 优先按 "desensitized_dir_readonly" 规则拦下。
+write_whitelist:
+  - '{controlled_workdir}\output'                    # 员工工作输出
+  - '{controlled_workdir}\temp'                      # 临时文件
+  - 'D:\After-tuomin'                                # docx/pptx/xlsx skill 脱敏输出
+  - 'C:\Users\wuguoxiang\.claude\projects'               # Claude Code auto memory
+  - 'D:\cloud_security'                                 # 插件自身 config

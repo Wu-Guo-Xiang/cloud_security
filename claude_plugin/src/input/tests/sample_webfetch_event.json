@@ -1,0 +1,11 @@
+{
+  "session_id": "sess_test_webfetch",
+  "transcript_path": "/tmp/transcript.jsonl",
+  "cwd": "D:\\云桌面安全\\test",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "WebFetch",
+  "tool_input": {
+    "url": "https://docs.python.org/3/library/json.html",
+    "prompt": "summarize"
+  }
+}

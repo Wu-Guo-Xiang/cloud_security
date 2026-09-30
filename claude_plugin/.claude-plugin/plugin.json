@@ -1,0 +1,11 @@
+{
+  "name": "cloud-guard",
+  "version": "0.4.0",
+  "description": "Cloud Security AI 安全防护插件 — Claude Code 输入/输出扫描 + 会话审计 + Office 文件脱敏 skill",
+  "author": {
+    "name": "Cloud Security Team",
+    "email": "sec@example.com"
+  },
+  "keywords": ["security", "dlp", "audit", "hook", "redact", "docx", "pptx", "xlsx"],
+  "homepage": "http://192.168.3.57:8787"
+}

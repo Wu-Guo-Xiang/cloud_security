@@ -1,0 +1,7 @@
+﻿dept_path,dept_name,dept_id,parent_dept_id,user_name,user_email,user_display,open_id
+研发中心,研发中心,od-dept-001,0,张三,zhangsan@example.com,张三,ou_user_001
+研发中心/架构组,架构组,od-dept-002,od-dept-001,李四,lisi@example.com,李四,ou_user_002
+研发中心/安全工程部,安全工程部,od-dept-003,od-dept-001,王五,wangwu@example.com,王五,ou_user_003
+运维中心,运维中心,od-dept-004,0,赵六,zhaoliu@example.com,赵六,ou_user_004
+运维中心/云基础设施组,云基础设施组,od-dept-005,od-dept-004,孙七,sunqi@example.com,孙七,ou_user_005
+质量保障部,质量保障部,od-dept-006,0,周八,zhouba@example.com,周八,ou_user_006

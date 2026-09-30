@@ -1,0 +1,111 @@
+# 输入安全控制 - 敏感分类
+#
+# 由 config/rules.py 加载，提供给 detector / redactor。
+# 修改本文件后，cache key 会自动失效（版本哈希）。
+#
+# v2：已去掉评分链路。本文件仅描述"什么是敏感"、"怎么识别"、"怎么脱敏"。
+
+# 字段说明：
+#   regex:          供 detector / redactor 使用的识别正则（空表示由专用 detector 处理，如 credential）
+#   validator:      校验位算法（id_card_checksum / luhn）
+#   source:         来自外部数据源（如 word_library）
+#   mask_strategy:  actions/mask_strategies.py 中的策略名；空 → 用 [LABEL] 占位符
+#   enabled:        运营层开关，默认 true；改为 false 即停用该类目（不需改代码）
+#   capture_group:  默认 0=用完整匹配 group(0)；填 1 起用对应捕获组定位敏感片段，
+#                   常用于"标签：值"形态（保留前缀，只脱敏值）
+data_classes:
+  id_card:
+    regex: '(?<![\dXx])[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx](?![\dXx])'
+    validator: id_card_loose
+    mask_strategy: id_card
+  phone:
+    regex: '(?<!\d)1[3-9]\d{9}(?!\d)'
+    mask_strategy: mobile_phone
+  bank_card:
+    validator: luhn
+    mask_strategy: bank_card
+  company_email:
+    # 公司专属邮箱：@example.com 结尾的内部邮箱
+    # 定义在 email 之前 → redactor 合并重叠 span 时保留更精确的 label
+    regex: '(?<![A-Za-z0-9._%+\-])[A-Za-z0-9._%+\-]+@example\.com(?![A-Za-z0-9.\-])'
+    mask_strategy: email
+  email:
+    regex: '(?<![A-Za-z0-9._%+\-])[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}(?![A-Za-z0-9.\-])'
+    mask_strategy: email
+  employee_id:
+    # 公司工号：PYT / PYE + 3-6 位数字（如 PYT123 / PYE123456）
+    regex: '(?<![A-Za-z0-9])(?:PYT|PYE)\d{3,6}(?![A-Za-z0-9])'
+    mask_strategy: company_emp_id
+  api_key:
+    mask_strategy: api_key
+  aws_access_key:
+    # AWS Access Key ID:AKIA(长期) / ASIA(STS 临时) + 16 大写字母数字
+    # 前后用反查避免被嵌在更长的 token 里(AKIAFOOBAR 紧贴下文不算)
+    regex: '(?<![A-Z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Z0-9])'
+    mask_strategy: api_key
+  generic_api_key:
+    # 已知前缀的高置信凭据 token,FP 接近零:
+    #   sk-<≥20,含至少 1 位数字>  OpenAI / Anthropic 等 SK(sk-proj- 形态也覆盖)
+    #                              要求含数字以剔除 "sk-learn-tutorial-..." 这类英文短语
+    #   ghp_<30+>    GitHub personal access token / OAuth / server-to-server / user
+    #   github_pat_<≥40>  GitHub fine-grained PAT
+    #   xox[abprs]-...  Slack token
+    #   AIza<35>     Google API key
+    regex: '(?<![A-Za-z0-9_\-])(?:sk-(?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{20,}|gh[posu]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|xox[abprs]-[A-Za-z0-9\-]{20,}|AIza[A-Za-z0-9\-_]{35})(?![A-Za-z0-9_\-])'
+    mask_strategy: api_key
+  private_key:
+    mask_strategy: private_key
+  prod_password:
+    mask_strategy: password
+  internal_ip:
+    regex: '(?<![\d.])(?:10(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2})(?![\d.])'
+    mask_strategy: ipv4
+  db_connection:
+    mask_strategy: db_connection
+  customer_name:
+    source: word_library
+    mask_strategy: first_mask
+
+  # === 中文业务文档场景类目 ===
+  # 均使用"标签：值"形态 + capture_group=1，仅脱敏值，保留标签语义
+  # 分隔符字符类 [\s:：|｜] 同时覆盖三种排版：
+  #   "统一社会信用代码：xxx"（冒号）/ "统一社会信用代码 xxx"（空格）/
+  #   "| 统一社会信用代码 | xxx |"（markdown 表格分列，ASCII 或全角竖线）
+
+  uscc:
+    regex: '(?:统一社会信用代码|信用代码)[\s:：|｜]+([0-9A-HJ-NPQRTUWXY]{18})'
+    capture_group: 1
+    mask_strategy: first_mask
+
+  org_code:
+    regex: '组织机构代码[\s:：|｜]+(\d{8}-?[0-9X])'
+    capture_group: 1
+    mask_strategy: first_mask
+
+  contract_no:
+    regex: '(?:合同编号|协议编号|文件编号|文件号)[\s:：|｜]+([A-Za-z0-9\-]{4,})'
+    capture_group: 1
+    mask_strategy: first_mask
+
+  patent_code:
+    regex: '(?:专利|商标|著作权)申请号[\s:：|｜]+([A-Za-z0-9\.]{4,})'
+    capture_group: 1
+    mask_strategy: first_mask
+
+  landline:
+    regex: '(?:电话|联系电话|座机|总机|传真号码|传真)[\s:：|｜]+(0\d{2,3}-?\d{7,8})'
+    capture_group: 1
+    mask_strategy: fixed_phone
+
+  address:
+    regex: '(?:地址|住所|住址|注册地址|办公地址|经营地址|住所地)[\s:：|｜]+([^\n\r,，。；;|｜]{4,50})'
+    capture_group: 1
+    mask_strategy: head_tail_mask
+
+  # amount 类目刻意未启用：金额走 L2 LLM → [金额] 占位符。
+  # 不用 L1 regex 是因为 first_mask 掩成 "¥*******" 没有类目语义，
+  # 且会和同一 span 的 L2 [金额] 产生覆盖（L1 优先级高于 L2，结果就只剩星号）。
+
+  # date 类目刻意未启用：日期本身不是 PII，且形如 2026-03-18 / 2026-04-01
+  # 被 first_mask 掩成 "2*********" 反而破坏 Claude 对时间线的理解。
+  # 如未来需要支持"项目排期保密"场景再启用，并改用语义化策略。

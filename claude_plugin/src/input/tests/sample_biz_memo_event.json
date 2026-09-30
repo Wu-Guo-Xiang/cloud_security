@@ -1,0 +1,10 @@
+{
+  "session_id": "sess_llm_e2e_biz_memo",
+  "transcript_path": "/tmp/transcript.jsonl",
+  "cwd": "D:\\云桌面安全\\test",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "D:\\云桌面安全\\test\\projects\\biz_memo_2026q2.txt"
+  }
+}

@@ -1,0 +1,117 @@
+# 输入安全控制 - LLM 接入配置
+#
+# 由 config/llm.py 加载。endpoint / api_key 不写在这里，统一走 .env
+# （base_url / api_key / model 三个变量名与项目根 .env.example 一致）。
+#
+# 修改本文件后，cache key 会自动失效（llm.version 哈希）。
+
+# === LLM 总开关 ===
+# false → 整条 L2 链路短路，detectors/llm_detector.detect() 立即返回空
+# 用于：未部署 LLM 的本地环境、灰度切换、紧急关停
+enabled: true
+
+# === 调用参数 ===
+call:
+  timeout_seconds: 90        # 实体密集文档(30+ 实体)生成 JSON 时间 30s+；留余量给 reasoner 类模型
+  temperature: 0.0           # NER 任务固定低温
+  max_tokens: 4096           # 单 chunk 响应上限；18k 字符 chunk 可能产 60+ 实体 ≈ 2-3 KB JSON，留余量防截断
+  max_input_chars: 18000     # 单 chunk 字符上限；按实测 0.65 tok/char，18k 字符 ≈ 11.7k token + system ~1.2k，远低于 131k 上限
+  max_chunks: 20             # 切分上限；按 18k/chunk 算覆盖 360k 字符（~100 页文档）
+  concurrency: 4             # chunk 并发数；I/O bound，4 路一般够把延迟压到单 chunk 的 ~3 倍
+  retries: 1                 # 单次重试,首次冷启动超时(TLS握手/DNS/服务端冷启)能救回;再失败就降级,不拖 Hook 整体延迟
+
+# === 失败处理 ===
+# degrade_to_l1：LLM 不可用时只保留 L1 regex 的脱敏结果（命中即脱敏，不影响主链路）
+# block         ：LLM 不可用时整条链路阻断（最严格，仅推荐生产稳定后开启）
+on_failure: degrade_to_l1
+
+# === 实体类型枚举 ===
+# LLM 必须只输出这几种 type，其他一律丢弃。
+#
+# 占位策略：
+#   placeholder（默认）—— 走 EntityMap 顺序占位符 [{label}A] / [{label}B]，
+#                         同 session 同字面文本保持一致（公司/人员适用）。
+#   mask_id      —— 走 mask_strategies 中的 id_number 保形掩码，
+#                   保留首末 4 位、中间打星，适用于"号/编号/账号/卡号/信用代码"等
+#                   正则做不到、形态自由但语义明确的字段。LLM 错把长串数字识别成
+#                   PRODUCT 时也可降级走这条策略避免无意义编号噪声。
+entity_types:
+  - { type: COMPANY,   label: 公司, placeholder: placeholder }
+  - { type: PERSON,    label: 人员, placeholder: placeholder }
+  - { type: PRODUCT,   label: 产品, placeholder: placeholder }
+  - { type: MONEY,     label: 金额, placeholder: placeholder }
+  - { type: ID_NUMBER, label: 号码, placeholder: mask_id }
+  # PASSWORD：在富文档（.docx/.pptx/.xlsx）正文里以自然语言陈述的明文密码 / 口令 / 临时凭证。
+  # 富文档场景几乎不会出现代码注释/变量名里的"密码"二字，误报代价远低于代码文件，所以直接启用。
+  # placeholder=password 走 mask_strategies.password：整段打 8 个 *，不泄露长度也不泄露字符。
+  - { type: PASSWORD,  label: 口令, placeholder: password }
+
+# === Prompt 模板 ===
+# {text} 占位符为待识别文本；llm_detector 替换后送入 user message。
+# 通过 response_format=json_object 强制输出 JSON，仍然要在 prompt 里硬性约束格式。
+prompt:
+  system: |
+    你是敏感实体识别器。识别下面文本中的实体，只输出 JSON：
+    {"entities": [{"text": 原文片段, "type": 类型, "start": 起始字符索引}]}
+    类型只能是：COMPANY / PERSON / PRODUCT / MONEY / ID_NUMBER / PASSWORD。
+    start 必须严格等于 text 在原文中首次出现的字符索引。
+    禁止解释，禁止改写文本，禁止输出 JSON 以外的内容。
+
+    类型说明（请严格区分，不要把"号"型字段错归 PRODUCT 或 PERSON）：
+    - COMPANY  公司 / 机构 / 事务所 全称或可识别简称。例："星河智联科技（北京）有限公司"、"北辰会计师事务所"。
+    - PERSON   人名（中文姓名、英文姓名）。例："赵明哲"、"Alice Zhang"。**不要把数字串识别为人名。**
+    - PRODUCT  产品名、项目代号、系统名。例："智能风控引擎 v3"、"SH-RZ-2026-FRAUD-CORE"。
+    - MONEY    金额（含币种符号或单位）。例："¥12,800,000.00"、"人民币壹仟万元"。
+    - ID_NUMBER 概念：对某个具体业务对象（订单/合同/账户/案件/票据/工单/学籍 等）的
+                **唯一标识值**——本身无语义，只用于检索/对账/转账，泄露可能被用于撞库、
+                查询私人信息或资金操作。
+
+                判定方式：看上下文有没有"指代某物的唯一键"语义，**不要靠匹配固定关键词**。
+                常见称谓**不限于**：订单号 / 单号 / 工号 / 流水号 / 合同号 / 发票号 /
+                客户号 / 案件号 / 病历号 / 学号 / 准考证号 / 报关单号 / 受理号 / 会员号 /
+                卡号 / 账号 / 信用代码 / 纳税人识别号 / 开户行行号。形态从纯数字到字母
+                数字混排都有，可能含 `-_/` 分隔符，长度 4-30 都常见；只要语义对得上就标，
+                不要因为太短或太长跳过。
+
+                典型命中（跨业务域，长度/形态各异）：
+                - "对公账户 6222021234567890123"        → text: 6222021234567890123, type: ID_NUMBER
+                - "统一社会信用代码 91110108MA01XK7H29"  → text: 91110108MA01XK7H29, type: ID_NUMBER
+                - "工号 0042"                           → text: 0042, type: ID_NUMBER
+                - "工号 E20240315"                       → text: E20240315, type: ID_NUMBER
+                - "顺丰运单 SF1234567890"                → text: SF1234567890, type: ID_NUMBER
+                - "淘宝订单 1234567890123456789"         → text: 1234567890123456789, type: ID_NUMBER
+                - "合同编号 HT-2024-CN-0157"             → text: HT-2024-CN-0157, type: ID_NUMBER
+                - "流水号 20240315142301008877"          → text: 20240315142301008877, type: ID_NUMBER
+                - "病历号 BJ20240315008"                 → text: BJ20240315008, type: ID_NUMBER
+                - "微信商户单号 4200001234202403159876543210" → text: 4200001234202403159876543210, type: ID_NUMBER
+                - "客户号 C0012345"                      → text: C0012345, type: ID_NUMBER
+                - "学号 2021123456"                      → text: 2021123456, type: ID_NUMBER
+
+                典型不命中（以下都是公开标识 / 文档结构 / 元数据，**不是隐私**，不要标）：
+                * 文档结构：第 3 章 / 第 5 页 / 章节 2.1.4 / 附录 A / 表 3-1 / 图 4.2
+                * 版本/构建号：v1.2.3 / v2.0.0-rc4 / Build 2024.05.1 / Python 3.11.8 / iOS 17.4
+                * 错误/状态码：HTTP 404 / HTTP 500 / 错误码 E001 / 异常码 NPE-001
+                * 公开标准/出版号：ISBN 978-7-111-12345-6 / ISO 27001 / GB/T 28181 / RFC 7231 / CVE-2024-1234 / GB 50011-2010
+                * 时间/计数/进度：2024-03-15 / 2024 年 Q3 / 14:30:00 / 完成 12/30 / 排名第 5 / 共 100 条
+                * 比例/度量：12.5% / 3.14 / 95 分
+                * 公开行政编码：邮编 100086 / 区号 010（由地址/电话规则处理）
+                * 代码标识符：变量 user_id / 函数 getUserById / 类 OrderService
+                * 占位/略写：订单号 XXXXXX / 编号（略） / 待定
+    - PASSWORD  在文档正文中以自然语言陈述的明文密码 / 口令 / 临时凭证。
+                只识别**带有明确陈述意图**的具体密码值，不识别功能描述。
+                典型命中：
+                - "我的密码是 Abc123!@#"           → text: Abc123!@#, type: PASSWORD
+                - "登录密码：P@ssw0rd2026"          → text: P@ssw0rd2026, type: PASSWORD
+                - "管理员密码 admin#888"            → text: admin#888, type: PASSWORD
+                - "临时口令为 xyz9876"              → text: xyz9876, type: PASSWORD
+                - "初始口令 init_pwd_2026"          → text: init_pwd_2026, type: PASSWORD
+                - "登录凭证: TempPass_01"           → text: TempPass_01, type: PASSWORD
+                - "数据库密码设为 MyDb#Pwd!"        → text: MyDb#Pwd!, type: PASSWORD
+                典型不命中（仅功能描述、无具体值）：
+                - "修改密码请到设置页"、"忘记密码"、"密码错误次数过多"
+                - "密码长度需 ≥ 8 位"、"如何重置密码"
+                **手机号、身份证号、邮箱、IP 已由正则处理，不要重复输出。**
+                **API Key / Secret / Token / `password=xxx` 键值对形式 也不要输出，由凭证规则处理。**
+  user_template: |
+    文本：
+    <<<{text}>>>

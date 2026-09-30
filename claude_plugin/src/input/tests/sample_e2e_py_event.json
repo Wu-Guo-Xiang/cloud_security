@@ -1,0 +1,10 @@
+{
+  "session_id": "sess_e2e_py",
+  "transcript_path": "/tmp/transcript.jsonl",
+  "cwd": "D:\\云桌面安全\\test",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "D:\\云桌面安全\\test\\projects\\e2e_py_service.py"
+  }
+}

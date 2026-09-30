@@ -1,0 +1,66 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Grep|Glob|LS|WebFetch|Bash|Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__PYTHON_EXE__",
+            "args": ["__PLUGIN_DIR__\\src\\input\\input_scanner.py", "--event", "PreToolUse"],
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__PYTHON_EXE__",
+            "args": ["__PLUGIN_DIR__\\src\\output\\output_scanner.py"],
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__PYTHON_EXE__",
+            "args": ["__PLUGIN_DIR__\\src\\output\\stop_reviewer.py"],
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__PYTHON_EXE__",
+            "args": ["__PLUGIN_DIR__\\src\\input\\input_scanner.py", "--event", "UserPromptSubmit"],
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__PYTHON_EXE__",
+            "args": ["__PLUGIN_DIR__\\src\\updater\\version_check.py"],
+            "timeout": 10000
+          }
+        ]
+      }
+    ]
+  }
+}

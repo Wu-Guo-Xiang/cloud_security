@@ -1,0 +1,17 @@
+# 本地测试用户 → 部门 / 历史标记映射
+#
+# 字段说明：
+#   department:   "tech" / "non_tech" / "unknown"
+#   has_incident: 近 90 天是否有安全告警（true → 取消 tech_clean 优惠）
+#
+# 云桌面部署时由 LDAP 拉取后缓存替代本文件；user_context.py 自动检测哪个数据源可用。
+#
+# 测试用户（本机环境变量 USER / USERNAME 命中即生效；未命中走 default）
+users:
+  wuguoxiang:
+    department: tech
+    has_incident: false
+
+default:
+  department: unknown
+  has_incident: false

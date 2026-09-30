@@ -1,0 +1,17 @@
+local_collector: false
+log_sources: []
+watch_dir: ./data/logs
+database: E:\cloud_security_deploy\server_docker1\docker\data\audit.db
+rules_dir: E:\cloud_security_deploy\server_docker1\claude_audit\claude_audit\detector\rules
+web:
+  host: 0.0.0.0
+  port: 8787
+ingest:
+  enabled: true
+  token: ""
+plugins_dir: E:\cloud_security_deploy\server_docker1\docker\data\plugins
+litellm:
+  host: http://192.168.3.124:4000
+  api_key: "sk-litellm-demo-key"
+  offline_threshold_hours: 3
+glm_monitor_db: E:\cloud_security_deploy\server_docker1\glm_monitor\glm_monitor_data.db

@@ -1,0 +1,7 @@
+{
+  "session_id": "sess_test_prompt_pii",
+  "transcript_path": "/tmp/transcript.jsonl",
+  "cwd": "D:\\云桌面安全\\test",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "我的手机号是 13800138000，邮箱 user@example.com，帮我查询订单状态。"
+}

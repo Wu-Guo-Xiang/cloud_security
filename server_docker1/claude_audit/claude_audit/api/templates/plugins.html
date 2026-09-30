@@ -1,0 +1,347 @@
+{% extends "base.html" %}
+{% set active_page = 'plugins' %}
+{% block title %}插件管理 · Cloud Security AI 日志监控平台{% endblock %}
+{% block topbar %}插件管理{% endblock %}
+{% block body %}
+<link rel="stylesheet" href="/static/plugins.css">
+
+{# ── 版本同步提示(上传/修复后回显) ── #}
+{% if sync_notice %}
+<div class="filter-card" style="margin-bottom:16px;border-left:4px solid #f59e0b;background:#fffbeb">
+  <div class="filter-title" style="color:#b45309">⚠ 版本号已自动同步</div>
+  <p style="margin:6px 0 0;color:#92400e">{{ sync_notice }}</p>
+  <p class="hint" style="margin-top:4px">打包时 plugin.json 版本与手填版本不一致会导致老版本客户端更新中止(error.png)。服务器已自动纠正 zip 内版本号。建议后续打包前同步 bump .claude-plugin/plugin.json。</p>
+</div>
+{% endif %}
+
+{# ── 当前激活版本 ── #}
+<div class="filter-card" style="margin-bottom:16px">
+  <div class="filter-title">当前激活版本</div>
+  {% if active %}
+  <div class="active-release">
+    <div class="active-version">
+      <span class="ver-badge">v{{ active.version }}</span>
+      {% if active.version == active.min_required %}
+      <span class="policy-badge policy-force">强制更新</span>
+      {% else %}
+      <span class="policy-badge policy-optional">可选更新</span>
+      {% endif %}
+    </div>
+    <div class="active-meta">
+      <span>最低要求: <strong>v{{ active.min_required }}</strong></span>
+      <span class="sep">|</span>
+      <span>发布于 {{ active.released_at[:10] }}</span>
+      {% if active.release_notes %}<span class="sep">|</span><span>{{ active.release_notes }}</span>{% endif %}
+    </div>
+    <div class="active-sha">SHA256: <code>{{ active.sha256[:16] }}…</code></div>
+  </div>
+  {% else %}
+  <p class="empty">暂无激活版本，请上传插件包</p>
+  {% endif %}
+</div>
+
+{# ── 上传新版本 ── #}
+<div class="filter-card" style="margin-bottom:16px">
+  <div class="filter-title">上传新版本</div>
+  <form action="/plugins/upload" method="post" enctype="multipart/form-data" id="upload-form">
+    <input type="hidden" name="_csrf" value="{{ request.session.get('csrf_token','') }}">
+    <div class="filter-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr))">
+      <div class="filter-item">
+        <label for="f-version">版本号 <span class="hint">(x.y.z)</span></label>
+        <input type="text" id="f-version" name="version" value="{{ next_version }}" required
+               pattern="\d+\.\d+\.\d+" placeholder="0.2.1">
+      </div>
+      <div class="filter-item">
+        <label for="f-min">最低要求 <span class="hint">(=版本号→强制; &lt;版本号→可选)</span></label>
+        <input type="text" id="f-min" name="min_required" value="{{ next_min_required }}" required
+               pattern="\d+\.\d+\.\d+" placeholder="0.2.1">
+      </div>
+      <div class="filter-item" style="grid-column: 1 / -1">
+        <label for="f-notes">更新说明</label>
+        <input type="text" id="f-notes" name="release_notes" placeholder="修复xxx，新增yyy功能">
+      </div>
+      <div class="filter-item" style="grid-column: 1 / -1">
+        <label for="f-file">插件整包 (.zip)</label>
+        <input type="file" id="f-file" name="file" accept=".zip" required
+               style="padding:4px 0; border:1px solid #cbd5e1; border-radius:4px; background:#fff; font-size:12px; height:auto">
+      </div>
+    </div>
+    <div class="filter-actions">
+      <button type="submit" class="btn btn-primary">🚀 发布新版本</button>
+      <span class="hint" style="margin-left:8px; align-self:center">发布后自动激活，客户端下次会话即可更新</span>
+    </div>
+  </form>
+</div>
+
+{# ── 分级策略说明 ── #}
+<details class="legend" style="margin-bottom:16px">
+  <summary>版本策略说明</summary>
+  <ul>
+    <li><code>最低要求 = 版本号</code> → <strong>强制更新</strong>：低于此版本的客户端将被阻断一切操作</li>
+    <li><code>最低要求 &lt; 版本号</code> → <strong>可选更新</strong>：旧版客户端仅收到提示，不阻断</li>
+    <li>如需撤回强制更新：激活旧版本，或将旧版本的 min_required 设为较低值</li>
+  </ul>
+</details>
+
+{# ── 版本历史 ── #}
+<div class="filter-card">
+  <div class="filter-title">版本历史</div>
+  {% if releases %}
+  <table class="releases-table">
+    <thead>
+      <tr>
+        <th>版本</th>
+        <th>最低要求</th>
+        <th>策略</th>
+        <th>更新说明</th>
+        <th>发布时间</th>
+        <th>SHA256</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in releases %}
+      <tr class="{{ 'row-active' if r.is_active else '' }}">
+        <td><span class="ver-badge{{ ' ver-active' if r.is_active else '' }}">v{{ r.version }}</span></td>
+        <td>v{{ r.min_required }}</td>
+        <td>
+          {% if r.version == r.min_required %}
+          <span class="policy-badge policy-force">强制</span>
+          {% else %}
+          <span class="policy-badge policy-optional">可选</span>
+          {% endif %}
+        </td>
+        <td class="notes-cell">{{ r.release_notes or '—' }}</td>
+        <td class="ts">{{ r.released_at[:10] }}</td>
+        <td><code class="sha-cell">{{ r.sha256[:16] }}…</code></td>
+        <td class="actions-cell">
+          <form action="/plugins/{{ r.id }}/resync" method="post" style="display:inline">
+            <input type="hidden" name="_csrf" value="{{ request.session.get('csrf_token','') }}">
+            <button type="submit" class="btn btn-sm btn-outline" title="把 zip 内 plugin.json 版本对齐声明版本(修复老 updater 中止)" onclick="return confirm('修复 v{{ r.version }}：把 zip 内部版本号对齐声明版本 v{{ r.version }}？\\n(用于修复老版本客户端更新中止的问题)')">🔧 修复版本</button>
+          </form>
+          {% if r.is_active %}
+          <span class="active-label">✅ 当前</span>
+          {% else %}
+          <form action="/plugins/{{ r.id }}/activate" method="post" style="display:inline">
+            <input type="hidden" name="_csrf" value="{{ request.session.get('csrf_token','') }}">
+            <button type="submit" class="btn btn-sm btn-outline" onclick="return confirm('确认激活 v{{ r.version }}？当前激活版本将被替换。')">激活</button>
+          </form>
+          <form action="/plugins/{{ r.id }}/delete" method="post" style="display:inline">
+            <input type="hidden" name="_csrf" value="{{ request.session.get('csrf_token','') }}">
+            <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('确认删除 v{{ r.version }}？zip 文件也将被删除。')">删除</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">暂无发布版本</p>
+  {% endif %}
+</div>
+
+{# ── 更新记录 (谁拉了/下载了哪个版本) ── #}
+<div class="filter-card" style="margin-top:16px">
+  <div class="filter-title">更新记录 <span class="hint" style="font-weight:normal">— 谁在何时拉取/下载了哪个版本（IP→使用人 自动解析）</span></div>
+
+  <div id="pp-summary" style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:12px"></div>
+
+  <div class="filter-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));margin-bottom:10px">
+    <div class="filter-item">
+      <label for="pp-q">搜索 使用人/账户/IP</label>
+      <input type="text" id="pp-q" placeholder="如 younaxip 或 192.168.3.x" style="width:100%">
+    </div>
+    <div class="filter-item">
+      <label for="pp-version">版本</label>
+      <select id="pp-version" style="width:100%">
+        <option value="">全部版本</option>
+        {% for r in releases %}<option value="{{ r.version }}">v{{ r.version }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="filter-item">
+      <label for="pp-action">动作</label>
+      <select id="pp-action" style="width:100%">
+        <option value="">全部</option>
+        <option value="download">下载 zip（≈更新）</option>
+        <option value="manifest">检查版本</option>
+      </select>
+    </div>
+    <div class="filter-item" style="display:flex;align-items:flex-end">
+      <button type="button" class="btn btn-sm btn-outline" id="pp-refresh">🔄 刷新</button>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">
+    <div style="flex:2;min-width:340px">
+      <div class="filter-title" style="font-size:13px">拉取记录</div>
+      <table class="releases-table" id="pp-table" style="font-size:12px">
+        <thead><tr><th>时间</th><th>使用人</th><th>账户</th><th>IP</th><th>动作</th><th>版本</th></tr></thead>
+        <tbody id="pp-tbody"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
+      </table>
+      <div id="pp-pager" style="display:flex;gap:6px;align-items:center;justify-content:center;margin-top:8px;font-size:12px"></div>
+    </div>
+    <div style="flex:1;min-width:240px">
+      <div class="filter-title" style="font-size:13px">未更新当前版本 <span id="pp-notup-cnt" class="hint"></span></div>
+      <div id="pp-notup" class="empty" style="max-height:320px;overflow:auto">加载中…</div>
+    </div>
+  </div>
+  <p class="hint" style="margin-top:10px">
+    说明：客户端拉 manifest = 检查版本；拉 download = 真正下载更新包。"使用人"由该 IP 在 LiteLLM 网关的最近请求反查得到（同一台机器访问网关和本平台是同一局域网 IP），未匹配时只显示 IP。
+  </p>
+</div>
+
+<script>
+// 上传表单：版本号变化时自动同步最低要求（方便管理员，可手动改）
+document.getElementById('f-version').addEventListener('input', function() {
+  document.getElementById('f-min').value = this.value;
+});
+
+// 上传表单：文件选择后显示文件大小
+document.getElementById('f-file').addEventListener('change', function() {
+  if (this.files.length) {
+    var size = this.files[0].size;
+    var mb = (size / 1024 / 1024).toFixed(1);
+    console.log('Selected file: ' + this.files[0].name + ' (' + mb + ' MB)');
+  }
+});
+
+// ── 更新记录 ──────────────────────────────────────────
+var PP_PAGE = 1, PP_SIZE = 50;
+function ppParams(page) {
+  var q = document.getElementById('pp-q').value.trim();
+  var v = document.getElementById('pp-version').value;
+  var a = document.getElementById('pp-action').value;
+  var s = new URLSearchParams();
+  if (q) s.set('q', q);
+  if (v) s.set('version', v);
+  if (a) s.set('action', a);
+  s.set('page', page || PP_PAGE);
+  s.set('page_size', PP_SIZE);
+  return s.toString();
+}
+function ppAction(a) {
+  return a === 'download' ? '<span style="color:#16a34a">下载 zip</span>'
+       : a === 'manifest' ? '<span style="color:#64748b">检查版本</span>' : a;
+}
+function ppEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, function(c) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+  });
+}
+function ppStatus(s) {
+  var m = {
+    'online': ['在线', '#16a34a'],
+    'not_installed': ['未安装', '#dc2626'],
+    'offline': ['离线', '#d97706'],
+    'unused': ['未使用', '#94a3b8'],
+  }[s] || [s || '—', '#64748b'];
+  return '<span style="color:' + m[1] + '">' + m[0] + '</span>';
+}
+function ppRenderPager(d) {
+  var el = document.getElementById('pp-pager');
+  var tp = d.total_pages || 1, pg = d.page || 1, total = d.total || 0;
+  if (total === 0) { el.innerHTML = ''; return; }
+  var from = (pg - 1) * d.page_size + 1, to = Math.min(pg * d.page_size, total);
+  var h = '<span style="color:#64748b">共 ' + total + ' 条，' + from + '-' + to + '</span> ';
+  function btn(label, p, disabled, cur) {
+    if (disabled) return '<button class="btn btn-sm btn-outline" disabled style="opacity:.5;cursor:default">' + label + '</button>';
+    if (cur) return '<button class="btn btn-sm btn-primary" disabled>' + label + '</button>';
+    return '<button class="btn btn-sm btn-outline" onclick="PP_PAGE=' + p + ';loadPulls()">' + label + '</button>';
+  }
+  h += btn('‹ 上一页', pg - 1, pg <= 1, false);
+  // 页码: 最多显示 7 个, 当前页居中
+  var start = Math.max(1, pg - 3), end = Math.min(tp, start + 6);
+  start = Math.max(1, end - 6);
+  if (start > 1) h += '<span style="color:#94a3b8">…</span>';
+  for (var i = start; i <= end; i++) h += btn(i, i, false, i === pg);
+  if (end < tp) h += '<span style="color:#94a3b8">…</span>';
+  h += btn('下一页 ›', pg + 1, pg >= tp, false);
+  h += '<span style="color:#64748b;margin-left:8px">前往</span>'
+    + '<input type="number" id="pp-jump-input" min="1" max="' + tp + '" value="' + pg + '" '
+    + 'style="width:44px;height:24px;text-align:center;border:1px solid #cbd5e1;border-radius:4px;font-size:12px;padding:0 2px" '
+    + 'onkeydown="if(event.key===\'Enter\'){event.preventDefault();doPpJump(' + tp + ');}">'
+    + '<span style="color:#64748b">页</span>'
+    + '<button class="btn btn-sm btn-outline" type="button" onclick="doPpJump(' + tp + ')" style="padding:1px 7px;height:24px;font-size:12px">跳转</button>';
+  el.innerHTML = h;
+}
+function doPpJump(tp) {
+  var input = document.getElementById('pp-jump-input');
+  if (!input) return;
+  var p = parseInt(input.value, 10);
+  if (isNaN(p) || p < 1) p = 1;
+  if (tp && p > tp) p = tp;
+  PP_PAGE = p;
+  loadPulls();
+}
+var ppTimer = null;
+function loadPulls() {
+  var tbody = document.getElementById('pp-tbody');
+  tbody.innerHTML = '<tr><td colspan="6" class="empty">加载中…</td></tr>';
+  fetch('/api/plugin-pulls?' + ppParams())
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var pulls = d.pulls || [];
+      if (!pulls.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无记录（客户端拉取后会在此显示）</td></tr>';
+      } else {
+        tbody.innerHTML = pulls.map(function(p) {
+          return '<tr>'
+            + '<td class="ts">' + ppEsc(p.ts) + '</td>'
+            + '<td>' + ppEsc(p.name || '—') + '</td>'
+            + '<td style="color:#64748b">' + ppEsc(p.account || '') + '</td>'
+            + '<td><code>' + ppEsc(p.ip) + '</code></td>'
+            + '<td>' + ppAction(p.action) + '</td>'
+            + '<td>' + (p.version ? '<span class="ver-badge">v' + ppEsc(p.version) + '</span>' : '—') + '</td>'
+            + '</tr>';
+        }).join('');
+      }
+      ppRenderPager(d);
+      PP_PAGE = d.page || 1;
+      // 汇总
+      var hasActive = d.has_active_version;
+      var av = d.active_version ? 'v' + d.active_version : '未发布';
+      var upd = d.updated || [], nup = d.not_updated || [];
+      var sum = '<div style="background:' + (hasActive ? '#f0fdf4' : '#f8fafc') + ';border:1px solid ' + (hasActive ? '#86efac' : '#e2e8f0') + ';border-radius:6px;padding:6px 14px">当前激活版本 <b>' + av + '</b></div>';
+      if (hasActive) {
+        sum += '<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:6px 14px">✅ 已更新 <b>' + upd.length + '</b> 人</div>';
+        sum += '<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:6px 14px">⚠ 未更新 <b>' + nup.length + '</b> 人</div>';
+      } else {
+        sum += '<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:6px 14px">⚠ 尚未发布版本，无法统计更新情况</div>';
+      }
+      sum += '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:6px 14px">IP→人名 映射 ' + d.ip_resolved + ' 条</div>';
+      document.getElementById('pp-summary').innerHTML = sum;
+      // 未更新名单
+      var nupEl = document.getElementById('pp-notup');
+      document.getElementById('pp-notup-cnt').textContent = (hasActive && nup.length) ? '(' + nup.length + ' 人)' : '';
+      if (!hasActive) {
+        nupEl.className = 'empty';
+        nupEl.innerHTML = '请先在上方「上传新版本」发布并激活一个版本，之后客户端拉取会产生记录，此处显示未更新名单。';
+      } else if (!nup.length) {
+        nupEl.className = 'empty';
+        nupEl.innerHTML = '🎉 在册在线员工均已下载当前版本（或暂无在线员工数据）';
+      } else {
+        nupEl.className = '';
+        nupEl.innerHTML = '<table class="releases-table" style="font-size:12px">'
+          + nup.map(function(u) {
+              return '<tr><td>' + ppEsc(u.name) + '</td>'
+                + '<td style="color:#64748b">' + ppEsc(u.account) + '</td>'
+                + '<td>' + ppStatus(u.status) + '</td>'
+                + '<td><code>' + ppEsc(u.ip) + '</code></td></tr>';
+            }).join('') + '</table>';
+      }
+    })
+    .catch(function() {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">加载失败</td></tr>';
+      document.getElementById('pp-pager').innerHTML = '';
+    });
+}
+document.getElementById('pp-q').addEventListener('input', function() {
+  clearTimeout(ppTimer); ppTimer = setTimeout(function() { PP_PAGE = 1; loadPulls(); }, 350);
+});
+document.getElementById('pp-version').addEventListener('change', function() { PP_PAGE = 1; loadPulls(); });
+document.getElementById('pp-action').addEventListener('change', function() { PP_PAGE = 1; loadPulls(); });
+document.getElementById('pp-refresh').addEventListener('click', loadPulls);
+loadPulls();
+</script>
+{% endblock %}

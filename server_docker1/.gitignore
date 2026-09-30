@@ -1,0 +1,27 @@
+# Database & runtime data
+docker/data/*.db
+docker/data/*.db-journal
+docker/data/*.db-wal
+docker/data/*.db-shm
+docker/data/backups/
+docker/data/archives/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environments
+.env
+.env.local
+
+# IDE & OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

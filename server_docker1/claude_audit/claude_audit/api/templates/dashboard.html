@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+{% set active_page = 'dashboard' %}
+{% block title %}数据大屏 · Cloud Security AI 日志监控平台{% endblock %}
+{% block topbar %}数据大屏{% endblock %}
+{% block body %}
+<div class="dash-hero">
+  <div class="dash-hero-label">DASHBOARD</div>
+  <div class="dash-hero-title">Claude 使用行为总览</div>
+  <div class="dash-hero-sub">实时统计 · 全公司 Claude Code 员工机操作事件与规则命中</div>
+</div>
+
+<div class="kpi-grid">
+  <div class="kpi"><div class="kpi-label">总事件数</div><div class="kpi-value">{{ overview.total_events }}</div><div class="kpi-hint">全部历史 events</div></div>
+  <div class="kpi"><div class="kpi-label">今日事件</div><div class="kpi-value blue">{{ overview.today_events }}</div><div class="kpi-hint">当日 0 点至今</div></div>
+  <div class="kpi"><div class="kpi-label">总命中</div><div class="kpi-value orange">{{ overview.total_hits }}</div><div class="kpi-hint">规则引擎累计告警</div></div>
+  <div class="kpi"><div class="kpi-label">今日命中</div><div class="kpi-value red">{{ overview.today_hits }}</div><div class="kpi-hint">当日告警数</div></div>
+  <div class="kpi"><div class="kpi-label">累计用户数</div><div class="kpi-value">{{ overview.total_users }}</div><div class="kpi-hint">曾上报数据的不同用户数</div></div>
+  <div class="kpi"><div class="kpi-label">客户端数</div><div class="kpi-value">{{ overview.total_clients }}</div><div class="kpi-hint">unique client_id</div></div>
+  <div class="kpi"><div class="kpi-label">会话数</div><div class="kpi-value">{{ overview.total_sessions }}</div><div class="kpi-hint">Claude session_id 数</div></div>
+  <div class="kpi"><div class="kpi-label">激活规则</div><div class="kpi-value">{{ overview.total_rules }}</div><div class="kpi-hint">曾命中的规则数</div></div>
+</div>
+
+<div class="dash-grid">
+  <div class="dash-card col-8">
+    <div class="dash-card-title">近 14 日趋势</div>
+    <div class="chart-wrap" style="height:280px"><canvas id="chart-trend"></canvas></div>
+  </div>
+  <div class="dash-card col-4">
+    <div class="dash-card-title">告警严重级别分布</div>
+    <div class="chart-wrap" style="height:280px"><canvas id="chart-severity"></canvas></div>
+  </div>
+
+  <div class="dash-card col-6">
+    <div class="dash-card-title">Top 10 用户 · 事件量</div>
+    <div class="chart-wrap" style="height:260px"><canvas id="chart-users"></canvas></div>
+  </div>
+  <div class="dash-card col-6">
+    <div class="dash-card-title">Top 10 客户端 · 事件量</div>
+    <div class="chart-wrap" style="height:260px"><canvas id="chart-clients"></canvas></div>
+  </div>
+
+  <div class="dash-card col-8">
+    <div class="dash-card-title">Top 15 命中规则</div>
+    <div class="chart-wrap" style="height:340px"><canvas id="chart-rules"></canvas></div>
+  </div>
+  <div class="dash-card col-4">
+    <div class="dash-card-title">工具调用分布</div>
+    <div class="chart-wrap" style="height:340px"><canvas id="chart-tool"></canvas></div>
+  </div>
+
+  <div class="dash-card col-4">
+    <div class="dash-card-title">事件类型分布</div>
+    <div class="chart-wrap" style="height:260px"><canvas id="chart-event"></canvas></div>
+  </div>
+  <div class="dash-card col-4">
+    <div class="dash-card-title">决策分布（处置结果）</div>
+    <div class="chart-wrap" style="height:260px"><canvas id="chart-decision"></canvas></div>
+  </div>
+  <div class="dash-card col-4">
+    <div class="dash-card-title">近 24 小时活跃 (每小时事件)</div>
+    <div class="chart-wrap" style="height:260px"><canvas id="chart-hourly"></canvas></div>
+  </div>
+
+  <div class="dash-card col-12">
+    <div class="dash-card-title">最近 10 条 critical / high 告警</div>
+    {% if recent_alerts %}
+    <table class="hits">
+      <thead><tr><th>时间</th><th>规则</th><th>级别</th><th>工具</th><th>用户 / 客户端</th><th>预览</th><th>事件</th></tr></thead>
+      <tbody>
+      {% for r in recent_alerts %}
+        <tr class="sev-{{ r.severity }}">
+          <td class="ts">{{ r.ts }}</td>
+          <td title="{{ r.rule_id }}"><a class="rule-link" href="/events?rule_id={{ r.rule_id }}">{{ r.display_name }}</a></td>
+          <td><span class="sev-badge sev-{{ r.severity }}">{{ r.severity }}</span></td>
+          <td>{{ r.tool or '' }}</td>
+          <td class="who">
+            <div class="user">{{ r.user or '' }}</div>
+            <div class="cid">{{ r.client_id or '' }}</div>
+          </td>
+          <td class="preview">
+            {% if r.bash_command %}<code>{{ r.bash_command[:120] }}</code>{% endif %}
+            {% if r.file_path %}<span class="path">{{ r.file_path }}</span>{% endif %}
+            {% if r.url %}<span class="url">{{ r.url }}</span>{% endif %}
+          </td>
+          <td><a class="rule-link" href="/events/{{ r.event_id }}">#{{ r.event_id }}</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="empty">暂无高危告警</p>{% endif %}
+  </div>
+</div>
+
+<script src="/static/chart.umd.min.js"></script>
+<script>
+(function(){
+  const PALETTE = ['#3b82f6','#f59e0b','#ef4444','#10b981','#8b5cf6','#ec4899','#14b8a6','#f97316','#6366f1','#84cc16','#06b6d4','#eab308'];
+  const SEV = {critical:'#b91c1c', high:'#c2410c', warn:'#a16207', info:'#0369a1'};
+
+  Chart.defaults.font.family = '"Segoe UI","Microsoft Yahei",sans-serif';
+  Chart.defaults.font.size = 12;
+  Chart.defaults.color = '#475569';
+
+  const trend = {{ trend|tojson }};
+  const trendHits = {{ trend_hits|tojson }};
+  // 合并日期轴
+  const daysSet = new Set([...trend.map(x=>x.day), ...trendHits.map(x=>x.day)]);
+  const days = Array.from(daysSet).sort();
+  const dayEvents = days.map(d => (trend.find(x=>x.day===d)||{}).c || 0);
+  const dayHits = days.map(d => (trendHits.find(x=>x.day===d)||{}).c || 0);
+
+  new Chart(document.getElementById('chart-trend'), {
+    type: 'line',
+    data: {
+      labels: days,
+      datasets: [
+        {label:'事件数', data: dayEvents, borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,.15)', fill:true, tension:.3, pointRadius:3},
+        {label:'命中数', data: dayHits, borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,.12)', fill:true, tension:.3, pointRadius:3}
+      ]
+    },
+    options: {responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, scales:{y:{beginAtZero:true}}}
+  });
+
+  const bySev = {{ by_severity|tojson }};
+  new Chart(document.getElementById('chart-severity'), {
+    type: 'doughnut',
+    data: {
+      labels: bySev.map(x=>x.severity),
+      datasets: [{data: bySev.map(x=>x.c), backgroundColor: bySev.map(x=>SEV[x.severity]||'#94a3b8'), borderWidth:2, borderColor:'#fff'}]
+    },
+    options: {responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, cutout:'55%'}
+  });
+
+  const topUsers = {{ top_users|tojson }};
+  new Chart(document.getElementById('chart-users'), {
+    type: 'bar',
+    data: {
+      labels: topUsers.map(x=>x.user),
+      datasets: [{label:'事件数', data: topUsers.map(x=>x.c), backgroundColor:'#3b82f6', borderRadius:4}]
+    },
+    options: {indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{beginAtZero:true}}}
+  });
+
+  const topClients = {{ top_clients|tojson }};
+  new Chart(document.getElementById('chart-clients'), {
+    type: 'bar',
+    data: {
+      labels: topClients.map(x=>x.client_id),
+      datasets: [{label:'事件数', data: topClients.map(x=>x.c), backgroundColor:'#10b981', borderRadius:4}]
+    },
+    options: {indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{beginAtZero:true}}}
+  });
+
+  const topRules = {{ top_rules|tojson }};
+  new Chart(document.getElementById('chart-rules'), {
+    type: 'bar',
+    data: {
+      labels: topRules.map(x => x.display_name || x.rule_id),
+      datasets: [{label:'命中', data: topRules.map(x=>x.c), backgroundColor: topRules.map(x=>SEV[x.severity]||'#94a3b8'), borderRadius:4}]
+    },
+    options: {indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{beginAtZero:true}}}
+  });
+
+  const byTool = {{ by_tool|tojson }};
+  new Chart(document.getElementById('chart-tool'), {
+    type: 'pie',
+    data: {labels: byTool.map(x=>x.tool), datasets:[{data: byTool.map(x=>x.c), backgroundColor: byTool.map((_,i)=>PALETTE[i%PALETTE.length]), borderWidth:2, borderColor:'#fff'}]},
+    options: {responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'right', labels:{boxWidth:12}}}}
+  });
+
+  const byEvent = {{ by_event|tojson }};
+  new Chart(document.getElementById('chart-event'), {
+    type: 'doughnut',
+    data: {labels: byEvent.map(x=>x.event), datasets:[{data: byEvent.map(x=>x.c), backgroundColor: byEvent.map((_,i)=>PALETTE[i%PALETTE.length]), borderWidth:2, borderColor:'#fff'}]},
+    options: {responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, cutout:'50%'}
+  });
+
+  const byDecision = {{ by_decision|tojson }};
+  new Chart(document.getElementById('chart-decision'), {
+    type: 'doughnut',
+    data: {labels: byDecision.map(x=>x.decision), datasets:[{data: byDecision.map(x=>x.c), backgroundColor: byDecision.map((_,i)=>PALETTE[i%PALETTE.length]), borderWidth:2, borderColor:'#fff'}]},
+    options: {responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, cutout:'50%'}
+  });
+
+  const hourly = {{ hourly|tojson }};
+  // 补齐 24 小时
+  const hhMap = Object.fromEntries(hourly.map(x=>[x.hh, x.c]));
+  const hhs = Array.from({length:24}, (_,i)=>String(i).padStart(2,'0'));
+  new Chart(document.getElementById('chart-hourly'), {
+    type: 'bar',
+    data: {
+      labels: hhs.map(h => h+':00'),
+      datasets: [{label:'事件数', data: hhs.map(h => hhMap[h] || 0), backgroundColor:'#8b5cf6', borderRadius:3}]
+    },
+    options: {responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true}}}
+  });
+})();
+</script>
+{% endblock %}
